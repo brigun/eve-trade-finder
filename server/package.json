@@ -7,7 +7,7 @@
     "dev": "tsx watch src/index.ts",
     "build": "tsc",
     "start": "node dist/index.js",
-    "test": "node --experimental-strip-types --test src/services/__tests__/tradeAnalytics.test.ts src/services/__tests__/neonAdvisor.test.ts src/services/__tests__/gameInfoFormat.test.ts"
+    "test": "node --experimental-strip-types --test src/services/__tests__/tradeAnalytics.test.ts src/services/__tests__/neonAdvisor.test.ts src/services/__tests__/gameInfoFormat.test.ts src/services/__tests__/candleAnalytics.test.ts"
   },
   "dependencies": {
     "cors": "^2.8.5",

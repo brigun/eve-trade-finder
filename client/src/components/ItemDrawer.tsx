@@ -9,17 +9,6 @@ import {
   Star,
   X,
 } from 'lucide-react';
-import {
-  Bar,
-  CartesianGrid,
-  ComposedChart,
-  Line,
-  ReferenceLine,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts';
 import { api } from '../lib/api.ts';
 import {
   formatIskCompact,
@@ -32,6 +21,7 @@ import {
 import type { ItemDetailResponse } from '../types/api.ts';
 import { ItemGameInfoModal } from './ItemGameInfoModal.tsx';
 import { ItemIcon } from './ItemIcon.tsx';
+import { MarketCandlestickChart } from './MarketCandlestickChart.tsx';
 
 interface ItemDrawerProps {
   typeId: number | null;
@@ -434,12 +424,12 @@ export function ItemDrawer({
                 )}
               </div>
 
-              {/* 30-Day Price & Volume Chart */}
+              {/* Price Candlesticks & Buy/Sell Execution Flow */}
               <div className="bg-[#161923] border border-[#262938] rounded-md p-4 space-y-3">
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h3 className="font-display text-xs font-semibold uppercase tracking-wider text-[#EFEAE0]">
-                      The Forge 30-Day Price & Volume History
+                      The Forge Price Candlesticks &amp; Buy/Sell Flow
                     </h3>
                     <p className="text-[11px] font-mono-num text-[#656A7C]">
                       {detail.item.hasHistory
@@ -463,83 +453,11 @@ export function ItemDrawer({
                     No historical trades recorded in The Forge over the last 45 days.
                   </div>
                 ) : (
-                  <div className="h-60 w-full">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <ComposedChart data={detail.history.slice(-30)}>
-                        <CartesianGrid stroke="#262938" strokeDasharray="3 3" vertical={false} />
-                        <XAxis
-                          dataKey="date"
-                          tick={{ fill: '#656A7C', fontSize: 10 }}
-                          tickFormatter={(v: string) => v.slice(5)}
-                          axisLine={{ stroke: '#262938' }}
-                          tickLine={false}
-                        />
-                        <YAxis
-                          yAxisId="price"
-                          orientation="left"
-                          domain={['auto', 'auto']}
-                          tick={{ fill: '#9CA0B0', fontSize: 10 }}
-                          tickFormatter={(v: number) => formatIskCompact(v, false)}
-                          axisLine={false}
-                          tickLine={false}
-                          width={64}
-                        />
-                        <YAxis
-                          yAxisId="vol"
-                          orientation="right"
-                          tick={{ fill: '#656A7C', fontSize: 10 }}
-                          tickFormatter={(v: number) => formatUnitsCompact(v)}
-                          axisLine={false}
-                          tickLine={false}
-                          width={48}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: '#08090D',
-                            border: '1px solid #262938',
-                            borderRadius: '6px',
-                            fontSize: '11px',
-                            fontFamily: 'JetBrains Mono, monospace',
-                            color: '#EFEAE0',
-                          }}
-                          formatter={(value: unknown, name: string) => {
-                            const num = Number(value);
-                            if (name === 'Volume') return [num.toLocaleString() + ' units', name];
-                            return [formatIskExact(num) + ' ISK', name];
-                          }}
-                        />
-                        <Bar
-                          yAxisId="vol"
-                          dataKey="volume"
-                          name="Volume"
-                          fill="#9B7BFF"
-                          fillOpacity={0.28}
-                          radius={[2, 2, 0, 0]}
-                        />
-                        <Line
-                          yAxisId="price"
-                          type="monotone"
-                          dataKey="average"
-                          name="Avg Price"
-                          stroke="#46E595"
-                          strokeWidth={2}
-                          dot={false}
-                        />
-                        <ReferenceLine
-                          yAxisId="price"
-                          y={detail.item.bestBid}
-                          stroke="#E07A63"
-                          strokeDasharray="4 4"
-                        />
-                        <ReferenceLine
-                          yAxisId="price"
-                          y={detail.item.bestAsk}
-                          stroke="#B298FF"
-                          strokeDasharray="4 4"
-                        />
-                      </ComposedChart>
-                    </ResponsiveContainer>
-                  </div>
+                  <MarketCandlestickChart
+                    history={detail.history}
+                    bestBid={detail.item.bestBid}
+                    bestAsk={detail.item.bestAsk}
+                  />
                 )}
               </div>
 
