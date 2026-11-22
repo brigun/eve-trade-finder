@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import {
   Activity,
   Bookmark,
@@ -7,8 +8,14 @@ import {
   RefreshCw,
   Settings,
   ShieldCheck,
+  Sparkles,
 } from 'lucide-react';
-import { characterPortraitUrl, formatRelativeTime } from '../lib/format.ts';
+import {
+  NLDF_CORP_ID,
+  characterPortraitUrl,
+  corporationLogoUrl,
+  formatRelativeTime,
+} from '../lib/format.ts';
 import type { FeeConfig, MarketStats, SsoStatusResponse, SyncStatusResponse } from '../types/api.ts';
 
 export type AppTab = 'scanner' | 'watchlist' | 'orders' | 'settings';
@@ -23,6 +30,7 @@ interface TopBarProps {
   undercutCount: number;
   onSyncOrders: () => void;
   onBackfillHistory: () => void;
+  onAskNeon: () => void;
 }
 
 export function TopBar({
@@ -35,7 +43,9 @@ export function TopBar({
   undercutCount,
   onSyncOrders,
   onBackfillHistory,
+  onAskNeon,
 }: TopBarProps) {
+  const [logoFailed, setLogoFailed] = useState(false);
   const orderRunning = syncStatus?.orderSync.running ?? false;
   const sdeRunning = syncStatus?.sdeSync.running ?? false;
   const historyRunning = syncStatus?.historyBackfill.running ?? false;
@@ -55,22 +65,22 @@ export function TopBar({
       <div className="max-w-[1640px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-4">
         {/* Brand & Station Identity */}
         <div className="flex items-center gap-3 min-w-0">
-          <div className="relative w-9 h-9 rounded-md bg-[#161923] border border-[#262938] flex items-center justify-center shrink-0">
-            <svg viewBox="0 0 32 32" className="w-6 h-6" fill="none">
-              <circle cx="16" cy="16" r="11" stroke="#9B7BFF" strokeWidth="1.25" strokeOpacity="0.45" />
-              <ellipse
-                cx="16"
-                cy="16"
-                rx="13"
-                ry="5"
-                transform="rotate(-24 16 16)"
-                stroke="#EFEAE0"
-                strokeWidth="1.2"
-                strokeOpacity="0.85"
+          <div
+            title="Naval Defence Force [NLDF]"
+            className="relative w-10 h-10 rounded-md bg-[#161923] border border-[#262938] overflow-hidden flex items-center justify-center shrink-0"
+          >
+            {logoFailed ? (
+              <span className="font-mono-num text-[10px] font-bold tracking-wider text-[#B298FF]">
+                NLDF
+              </span>
+            ) : (
+              <img
+                src={corporationLogoUrl(NLDF_CORP_ID, 128)}
+                alt="Naval Defence Force [NLDF]"
+                onError={() => setLogoFailed(true)}
+                className="w-full h-full object-cover"
               />
-              <circle cx="16" cy="16" r="3" fill="#9B7BFF" />
-              <circle cx="24" cy="11" r="1.6" fill="#46E595" />
-            </svg>
+            )}
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
@@ -212,6 +222,17 @@ export function TopBar({
           >
             <History className={`w-3.5 h-3.5 text-[#9B7BFF] ${historyRunning ? 'animate-spin' : ''}`} />
             <span>History</span>
+          </button>
+
+          {/* Ask Neon Advisor Button */}
+          <button
+            type="button"
+            onClick={onAskNeon}
+            title="Consult Neon LLM for top 3 session trade recommendations"
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-semibold bg-[#9B7BFF]/18 text-[#EFEAE0] border border-[#9B7BFF]/60 hover:bg-[#9B7BFF]/30 transition-colors cursor-pointer"
+          >
+            <Sparkles className="w-3.5 h-3.5 text-[#B298FF]" />
+            <span>Ask Neon</span>
           </button>
 
           {/* Primary Sync Jita Button */}

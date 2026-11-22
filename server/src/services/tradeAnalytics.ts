@@ -51,6 +51,15 @@ export interface AnomalyFlag {
   reason: string;
 }
 
+export interface ScoreBreakdown {
+  profitScore: number;
+  salesVolumeScore: number;
+  bookDepthScore: number;
+  competitionScore: number;
+  momentumBonus: number;
+  riskPenalty: number;
+}
+
 export interface ComputedItemMetrics {
   buyCost: number;
   sellProceeds: number;
@@ -59,6 +68,11 @@ export interface ComputedItemMetrics {
   roiPct: number;
   netMarginPct: number;
   estDailyProfit: number | null;
+  bidDepthIsk: number;
+  askDepthIsk: number;
+  bookDepthIsk: number;
+  tradeScore: number;
+  scoreBreakdown: ScoreBreakdown;
   anomalies: AnomalyFlag[];
   hasAnomaly: boolean;
   hasCriticalAnomaly: boolean;
@@ -197,6 +211,123 @@ export function detectAnomalies(
   return flags;
 }
 
+export function computeTradeScore(params: {
+  summary: MarketSummaryLike;
+  history: HistoryMetricsLike | null;
+  bestBid: number;
+  bestAsk: number;
+  netProfit: number;
+  roiPct: number;
+  estDailyProfit: number | null;
+  bidDepthIsk: number;
+  askDepthIsk: number;
+  anomalies: AnomalyFlag[];
+  isTrending: boolean;
+  hasCriticalAnomaly: boolean;
+}): { tradeScore: number; scoreBreakdown: ScoreBreakdown } {
+  const {
+    summary,
+    history,
+    bestBid,
+    bestAsk,
+    netProfit,
+    roiPct,
+    estDailyProfit,
+    bidDepthIsk,
+    askDepthIsk,
+    anomalies,
+    isTrending,
+    hasCriticalAnomaly,
+  } = params;
+
+  const round1 = (n: number) => Number(n.toFixed(1));
+
+  // 1. Profit & Price Efficiency (0 - 25 pts)
+  let profitScore = 0;
+  if (netProfit > 0 && bestBid > 0 && bestAsk > 0) {
+    const roiPart = 18 * clamp(Math.log1p(Math.min(roiPct, 80)) / Math.log1p(50), 0, 1);
+    let pricePart = 2;
+    if (bestBid >= 10_000 && bestBid <= 500_000_000) {
+      pricePart = 7;
+    } else if (bestBid >= 50 && bestBid < 10_000) {
+      pricePart = 3 + 4 * clamp(Math.log10(bestBid / 50) / Math.log10(10_000 / 50), 0, 1);
+    } else if (bestBid > 500_000_000 && bestBid <= 2_000_000_000) {
+      pricePart = 7 - 3 * clamp((bestBid - 500_000_000) / 1_500_000_000, 0, 1);
+    }
+    profitScore = roiPart + pricePart;
+  }
+
+  // 2. Sales Volume & Daily Profit (0 - 30 pts)
+  let salesVolumeScore = 0;
+  if (history !== null) {
+    const iskVolPart =
+      16 * clamp(Math.log10(Math.max(1, history.daily_isk_volume_7d / 1_000_000)) / 3.7, 0, 1);
+    const estProfitPart =
+      10 * clamp(Math.log10(Math.max(1, (estDailyProfit ?? 0) / 100_000)) / 3.3, 0, 1);
+    const consistencyPart = 4 * clamp(history.active_days_30d / 28, 0, 1);
+    salesVolumeScore = iskVolPart + estProfitPart + consistencyPart;
+  }
+
+  // 3. Order Book Depth & Balance (0 - 20 pts)
+  const minSideDepth = Math.min(bidDepthIsk, askDepthIsk);
+  const maxSideDepth = Math.max(bidDepthIsk, askDepthIsk);
+  const depthPart = 10 * clamp(Math.log10(Math.max(1, minSideDepth / 1_000_000)) / 3.0, 0, 1);
+  const balancePart = maxSideDepth > 0 ? 5 * clamp(minSideDepth / maxSideDepth, 0, 1) : 0;
+  const orderCountPart =
+    5 * clamp(Math.min(summary.buy_order_count, summary.sell_order_count) / 5, 0, 1);
+  const bookDepthScore = depthPart + balancePart + orderCountPart;
+
+  // 4. Active Competing Traders & Velocity (0 - 20 pts)
+  const topComp = summary.top_buy_competition + summary.top_sell_competition;
+  let compPart = 4;
+  if (topComp > 0 && topComp <= 10) {
+    compPart = 8 + 4 * clamp(topComp / 4, 0, 1);
+  } else if (topComp > 10) {
+    compPart = 12 * Math.exp(-(topComp - 10) / 18);
+  }
+
+  let velocityPart = 2;
+  if (summary.recent_updates_24h > 0) {
+    if (summary.recent_updates_1h <= 6) {
+      velocityPart = 8;
+    } else {
+      velocityPart = 8 * Math.exp(-(summary.recent_updates_1h - 6) / 10);
+    }
+  }
+  const competitionScore = compPart + velocityPart;
+
+  // 5. Momentum Bonus (0 - 5 pts) & Risk Penalty (0 - 25 pts)
+  const momentumBonus = isTrending
+    ? 5
+    : history && history.volume_trend_pct >= 10 && !hasCriticalAnomaly
+      ? 2
+      : 0;
+
+  let highSeverityCount = 0;
+  let mediumSeverityCount = 0;
+  for (const flag of anomalies) {
+    if (flag.severity === 'high') highSeverityCount++;
+    else mediumSeverityCount++;
+  }
+  const riskPenalty = Math.min(25, highSeverityCount * 15 + mediumSeverityCount * 6);
+
+  const rawScore =
+    profitScore + salesVolumeScore + bookDepthScore + competitionScore + momentumBonus - riskPenalty;
+  const tradeScore = round1(clamp(rawScore, 0, 100));
+
+  return {
+    tradeScore,
+    scoreBreakdown: {
+      profitScore: round1(profitScore),
+      salesVolumeScore: round1(salesVolumeScore),
+      bookDepthScore: round1(bookDepthScore),
+      competitionScore: round1(competitionScore),
+      momentumBonus: round1(momentumBonus),
+      riskPenalty: round1(riskPenalty),
+    },
+  };
+}
+
 export function computeItemMetrics(
   summary: MarketSummaryLike,
   history: HistoryMetricsLike | null,
@@ -220,6 +351,10 @@ export function computeItemMetrics(
       ? Math.max(0, netProfit) * history.daily_volume_7d * captureShare
       : null;
 
+  const bidDepthIsk = bestBid > 0 ? bestBid * summary.bid_volume : 0;
+  const askDepthIsk = bestAsk > 0 ? bestAsk * summary.ask_volume : 0;
+  const bookDepthIsk = bidDepthIsk + askDepthIsk;
+
   const anomalies = detectAnomalies(summary, history, roiPct);
   const hasAnomaly = anomalies.length > 0;
   const hasCriticalAnomaly = anomalies.some((flag) => flag.severity === 'high');
@@ -232,6 +367,21 @@ export function computeItemMetrics(
       (history.price_trend_pct >= 5 && history.volume_trend_pct >= 0)) &&
     !hasCriticalAnomaly;
 
+  const { tradeScore, scoreBreakdown } = computeTradeScore({
+    summary,
+    history,
+    bestBid,
+    bestAsk,
+    netProfit,
+    roiPct,
+    estDailyProfit,
+    bidDepthIsk,
+    askDepthIsk,
+    anomalies,
+    isTrending,
+    hasCriticalAnomaly,
+  });
+
   return {
     buyCost,
     sellProceeds,
@@ -240,6 +390,11 @@ export function computeItemMetrics(
     roiPct,
     netMarginPct,
     estDailyProfit,
+    bidDepthIsk,
+    askDepthIsk,
+    bookDepthIsk,
+    tradeScore,
+    scoreBreakdown,
     anomalies,
     hasAnomaly,
     hasCriticalAnomaly,

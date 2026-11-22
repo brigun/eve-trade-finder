@@ -5,10 +5,17 @@ import type {
   FilterState,
   HistoryPoint,
   ItemDetailResponse,
+  ItemGameInfo,
+  LlmModelsResponse,
+  LlmThinkingLevel,
   MarketGroupCount,
   MarketGroupTreeNode,
   MarketItemsResponse,
   MarketStats,
+  NeonAdvisorStatus,
+  NeonBriefingResponse,
+  NeonSessionStyle,
+  RecommendedTradesResponse,
   SsoStatusResponse,
   SyncStatusResponse,
   WatchlistItem,
@@ -62,6 +69,9 @@ export function buildMarketQueryParams(
   if (filters.marketGroupId !== null) {
     params.set('marketGroupId', String(filters.marketGroupId));
   }
+  if (filters.marketGroupIds.length > 0) {
+    params.set('marketGroupIds', filters.marketGroupIds.join(','));
+  }
   if (filters.trendingOnly) params.set('trendingOnly', 'true');
   if (filters.hideAnomalies) params.set('hideAnomalies', 'true');
   if (filters.watchlistOnly) params.set('watchlistOnly', 'true');
@@ -78,6 +88,24 @@ export const api = {
     const params = buildMarketQueryParams(filters, page, pageSize);
     return requestJson<MarketItemsResponse>(`/api/market/items?${params.toString()}`);
   },
+  getRecommendedTrades(opts?: {
+    minRoiPct?: number;
+    marketGroupId?: number | null;
+    marketGroupIds?: number[];
+  }): Promise<RecommendedTradesResponse> {
+    const params = new URLSearchParams();
+    if (opts?.minRoiPct !== undefined) params.set('minRoiPct', String(opts.minRoiPct));
+    if (opts?.marketGroupId !== undefined && opts.marketGroupId !== null) {
+      params.set('marketGroupId', String(opts.marketGroupId));
+    }
+    if (opts?.marketGroupIds && opts.marketGroupIds.length > 0) {
+      params.set('marketGroupIds', opts.marketGroupIds.join(','));
+    }
+    const qs = params.toString();
+    return requestJson<RecommendedTradesResponse>(
+      `/api/market/recommended${qs ? `?${qs}` : ''}`,
+    );
+  },
   getMarketStats(): Promise<MarketStats> {
     return requestJson<MarketStats>('/api/market/stats');
   },
@@ -88,6 +116,11 @@ export const api = {
   },
   getItemDetail(typeId: number): Promise<ItemDetailResponse> {
     return requestJson<ItemDetailResponse>(`/api/market/items/${typeId}`);
+  },
+  getItemGameInfo(typeId: number, force = false): Promise<{ gameInfo: ItemGameInfo }> {
+    return requestJson<{ gameInfo: ItemGameInfo }>(
+      `/api/market/items/${typeId}/game-info${force ? '?force=true' : ''}`,
+    );
   },
   getSyncStatus(): Promise<SyncStatusResponse> {
     return requestJson<SyncStatusResponse>('/api/sync/status');
@@ -151,7 +184,11 @@ export const api = {
     return requestJson<{ settings: AppSettings }>('/api/settings');
   },
   updateSettings(
-    payload: Partial<AppSettings> & { recalculateFromSkills?: boolean },
+    payload: Partial<AppSettings> & {
+      recalculateFromSkills?: boolean;
+      llmApiKey?: string;
+      clearLlmApiKey?: boolean;
+    },
   ): Promise<{ settings: AppSettings }> {
     return requestJson<{ settings: AppSettings }>('/api/settings', {
       method: 'PUT',
@@ -176,5 +213,29 @@ export const api = {
     orders: CharacterOrderItem[];
   }> {
     return requestJson('/api/auth/orders');
+  },
+  getAdvisorStatus(): Promise<NeonAdvisorStatus> {
+    return requestJson<NeonAdvisorStatus>('/api/advisor/status');
+  },
+  getAdvisorModels(): Promise<LlmModelsResponse> {
+    return requestJson<LlmModelsResponse>('/api/advisor/models');
+  },
+  getLatestBriefing(): Promise<{ briefing: NeonBriefingResponse | null }> {
+    return requestJson<{ briefing: NeonBriefingResponse | null }>('/api/advisor/latest');
+  },
+  askNeon(payload: {
+    budgetIsk?: number | null;
+    sessionStyle?: NeonSessionStyle;
+    userNote?: string;
+    minRoiPct?: number;
+    marketGroupId?: number | null;
+    marketGroupIds?: number[];
+    model?: string;
+    thinkingLevel?: LlmThinkingLevel;
+  }): Promise<{ briefing: NeonBriefingResponse }> {
+    return requestJson<{ briefing: NeonBriefingResponse }>('/api/advisor/ask-neon', {
+      method: 'POST',
+      body: JSON.stringify(payload),
+    });
   },
 };

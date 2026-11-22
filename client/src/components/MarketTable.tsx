@@ -186,6 +186,13 @@ export function MarketTable({
                 onSort={onSort}
               />
               <SortHeader
+                label="Score"
+                column="tradeScore"
+                sortBy={sortBy}
+                sortDir={sortDir}
+                onSort={onSort}
+              />
+              <SortHeader
                 label="Best Buy"
                 column="bestBid"
                 sortBy={sortBy}
@@ -319,6 +326,24 @@ export function MarketTable({
                         </div>
                       </div>
                     </div>
+                  </td>
+
+                  {/* Trade Score */}
+                  <td
+                    className="px-3 py-2 text-right font-mono-num whitespace-nowrap"
+                    title={`Price/ROI: ${item.scoreBreakdown.profitScore}/25\nSales Vol: ${item.scoreBreakdown.salesVolumeScore}/30\nBook Depth: ${item.scoreBreakdown.bookDepthScore}/20 (${formatIskCompact(item.bookDepthIsk, false)})\nTraders/Vel: ${item.scoreBreakdown.competitionScore}/20\nMomentum: +${item.scoreBreakdown.momentumBonus} | Risk: -${item.scoreBreakdown.riskPenalty}`}
+                  >
+                    <span
+                      className={`inline-block px-1.5 py-0.5 rounded text-[11px] font-semibold ${
+                        item.tradeScore >= 75
+                          ? 'bg-[#46E595]/18 text-[#46E595] border border-[#46E595]/35'
+                          : item.tradeScore >= 55
+                            ? 'bg-[#9B7BFF]/18 text-[#B298FF] border border-[#9B7BFF]/35'
+                            : 'bg-[#161923] text-[#9CA0B0] border border-[#262938]'
+                      }`}
+                    >
+                      {item.tradeScore.toFixed(1)}
+                    </span>
                   </td>
 
                   {/* Best Buy */}

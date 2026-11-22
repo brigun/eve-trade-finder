@@ -124,3 +124,88 @@ describe('Station trading metrics, trending, and anomaly detection', () => {
     assert.equal(metrics.isTrending, false);
   });
 });
+
+describe('Multi-factor tradeScore scoring model', () => {
+  const fees = { brokerFeePct: 1.8, salesTaxPct: 3.375, captureSharePct: 15 };
+  const strongSummary: MarketSummaryLike = {
+    best_bid: 5_000_000,
+    best_ask: 6_000_000,
+    raw_best_bid: 5_000_000,
+    bid_min_volume: 1,
+    bid_volume: 120,
+    ask_volume: 100,
+    buy_order_count: 14,
+    sell_order_count: 16,
+    top_buy_competition: 4,
+    top_sell_competition: 4,
+    recent_updates_1h: 4,
+    recent_updates_24h: 25,
+  };
+  const strongHistory: HistoryMetricsLike = {
+    daily_volume_7d: 80,
+    daily_volume_30d: 60,
+    daily_isk_volume_7d: 440_000_000,
+    daily_isk_volume_30d: 330_000_000,
+    avg_price_7d: 5_500_000,
+    avg_price_30d: 5_400_000,
+    volume_trend_pct: 33.3,
+    price_trend_pct: 1.85,
+    active_days_30d: 30,
+  };
+
+  it('gives high tradeScore (>= 70) to liquid, balanced-book, moderate-competition >=10% ROI items', () => {
+    const m = computeItemMetrics(strongSummary, strongHistory, fees);
+    assert.ok(m.roiPct >= 10);
+    assert.ok(m.tradeScore >= 70, `expected >= 70, got ${m.tradeScore}`);
+    assert.equal(m.bookDepthIsk, 5_000_000 * 120 + 6_000_000 * 100);
+    assert.equal(m.scoreBreakdown.riskPenalty, 0);
+  });
+
+  it('penalizes hyper-contested bot-war items relative to moderate competition', () => {
+    const moderate = computeItemMetrics(strongSummary, strongHistory, fees);
+    const botWar = computeItemMetrics(
+      {
+        ...strongSummary,
+        top_buy_competition: 25,
+        top_sell_competition: 25,
+        recent_updates_1h: 40,
+      },
+      strongHistory,
+      fees,
+    );
+    assert.ok(botWar.scoreBreakdown.competitionScore < moderate.scoreBreakdown.competitionScore);
+    assert.ok(botWar.tradeScore < moderate.tradeScore - 10);
+  });
+
+  it('penalizes thin or lopsided order book depth relative to balanced deep books', () => {
+    const balanced = computeItemMetrics(strongSummary, strongHistory, fees);
+    const thinLopsided = computeItemMetrics(
+      {
+        ...strongSummary,
+        bid_volume: 1,
+        ask_volume: 150,
+        buy_order_count: 1,
+        sell_order_count: 20,
+      },
+      strongHistory,
+      fees,
+    );
+    assert.ok(thinLopsided.scoreBreakdown.bookDepthScore < balanced.scoreBreakdown.bookDepthScore);
+    assert.ok(thinLopsided.tradeScore < balanced.tradeScore);
+  });
+
+  it('applies heavy risk penalty when anomalies are detected', () => {
+    const clean = computeItemMetrics(strongSummary, strongHistory, fees);
+    const trapped = computeItemMetrics(
+      {
+        ...strongSummary,
+        bid_min_volume: 50,
+        sell_order_count: 1,
+      },
+      strongHistory,
+      fees,
+    );
+    assert.ok(trapped.scoreBreakdown.riskPenalty >= 20);
+    assert.ok(trapped.tradeScore < clean.tradeScore - 15);
+  });
+});

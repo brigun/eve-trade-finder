@@ -4,6 +4,7 @@ import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
 import { CLIENT_DIST_DIR, CLIENT_ORIGIN, PORT } from './config.js';
 import { initDatabase } from './db/database.js';
+import { advisorRouter } from './routes/advisor.js';
 import { authRouter } from './routes/auth.js';
 import { marketRouter } from './routes/market.js';
 import { presetsRouter } from './routes/presets.js';
@@ -33,6 +34,7 @@ export function createApp() {
   app.use('/api/presets', presetsRouter);
   app.use('/api/settings', settingsRouter);
   app.use('/api/auth', authRouter);
+  app.use('/api/advisor', advisorRouter);
 
   if (fs.existsSync(CLIENT_DIST_DIR)) {
     app.use(express.static(CLIENT_DIST_DIR));
@@ -55,8 +57,10 @@ const isDirectEntry =
 
 if (isDirectEntry) {
   const app = createApp();
-  app.listen(PORT, () => {
+  const server = app.listen(PORT, () => {
     console.log(`[JITA IV // MONOLITH] Backend listening on http://localhost:${PORT}`);
     startScheduler();
   });
+  server.requestTimeout = 200_000;
+  server.headersTimeout = 205_000;
 }

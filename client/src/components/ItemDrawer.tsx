@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertTriangle,
+  BookOpen,
   Calculator,
   Copy,
   Flame,
@@ -29,6 +30,7 @@ import {
   nextEveTick,
 } from '../lib/format.ts';
 import type { ItemDetailResponse } from '../types/api.ts';
+import { ItemGameInfoModal } from './ItemGameInfoModal.tsx';
 import { ItemIcon } from './ItemIcon.tsx';
 
 interface ItemDrawerProps {
@@ -47,6 +49,7 @@ export function ItemDrawer({
   const [detail, setDetail] = useState<ItemDetailResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [historyLoading, setHistoryLoading] = useState(false);
+  const [gameInfoOpen, setGameInfoOpen] = useState(false);
 
   // Interactive calculator state
   const [calcBuy, setCalcBuy] = useState<number>(0);
@@ -80,6 +83,7 @@ export function ItemDrawer({
   }, [onNotify]);
 
   useEffect(() => {
+    setGameInfoOpen(false);
     if (typeId !== null) {
       void loadDetail(typeId, true);
     } else {
@@ -194,6 +198,15 @@ export function ItemDrawer({
           <div className="flex items-center gap-1.5 shrink-0">
             {detail && (
               <>
+                <button
+                  type="button"
+                  onClick={() => setGameInfoOpen(true)}
+                  title="View EVE Online in-game item description, required skills, and attributes"
+                  className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded bg-[#9B7BFF]/15 border border-[#9B7BFF]/50 hover:bg-[#9B7BFF]/25 text-xs font-medium text-[#B298FF] cursor-pointer"
+                >
+                  <BookOpen className="w-3.5 h-3.5" />
+                  <span>Game Info</span>
+                </button>
                 <button
                   type="button"
                   onClick={() => void handleToggleWatchlist()}
@@ -630,6 +643,13 @@ export function ItemDrawer({
           ) : null}
         </div>
       </aside>
+
+      <ItemGameInfoModal
+        typeId={detail?.item.typeId ?? null}
+        initialName={detail?.item.name}
+        open={gameInfoOpen}
+        onClose={() => setGameInfoOpen(false)}
+      />
     </div>
   );
 }

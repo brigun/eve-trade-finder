@@ -111,6 +111,12 @@ export function itemIconUrl(typeId: number, size: 32 | 64 = 64): string {
   return `https://images.evetech.net/types/${typeId}/icon?size=${size}`;
 }
 
+export const NLDF_CORP_ID = 98360452;
+
 export function characterPortraitUrl(characterId: number, size: 64 | 128 = 64): string {
   return `https://images.evetech.net/characters/${characterId}/portrait?size=${size}`;
+}
+
+export function corporationLogoUrl(corpId: number, size: 64 | 128 = 128): string {
+  return `https://images.evetech.net/corporations/${corpId}/logo?size=${size}`;
 }

@@ -21,13 +21,18 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   capture_share_pct: '15',
   esi_client_id: '',
   sso_redirect_uri: 'http://localhost:3001/api/auth/callback',
+  llm_provider: 'gemini',
+  llm_model: 'gemini-3.8-flash',
+  llm_base_url: 'http://localhost:11434/v1',
+  llm_thinking_level: 'MEDIUM',
+  llm_api_key: '',
 };
 
 const DEFAULT_PRESETS: PresetSeed[] = [
   {
     name: 'Balanced Jita Flips',
     filters: {
-      minRoiPct: 8,
+      minRoiPct: 10,
       minPrice: 100_000,
       maxPrice: 500_000_000,
       priceField: 'buy',
@@ -35,34 +40,34 @@ const DEFAULT_PRESETS: PresetSeed[] = [
       minDailyUnits: 5,
       hideAnomalies: true,
       excludeRootGroups: ['Ship SKINs', 'Apparel', 'Blueprints & Reactions'],
-      sortBy: 'estDailyProfit',
+      sortBy: 'tradeScore',
       sortDir: 'desc',
     },
   },
   {
     name: 'High-Volume Safe',
     filters: {
-      minRoiPct: 4,
+      minRoiPct: 10,
       priceField: 'buy',
       minDailyIskVolume: 250_000_000,
       minDailyUnits: 50,
       maxRecentUpdates1h: 15,
       hideAnomalies: true,
       excludeRootGroups: ['Ship SKINs', 'Apparel', 'Blueprints & Reactions'],
-      sortBy: 'dailyIskVolume7d',
+      sortBy: 'tradeScore',
       sortDir: 'desc',
     },
   },
   {
     name: 'Trending Breakouts',
     filters: {
-      minRoiPct: 6,
+      minRoiPct: 10,
       priceField: 'buy',
       trendingOnly: true,
       minDailyIskVolume: 15_000_000,
       hideAnomalies: true,
       excludeRootGroups: ['Ship SKINs', 'Apparel'],
-      sortBy: 'volumeTrendPct',
+      sortBy: 'tradeScore',
       sortDir: 'desc',
     },
   },
@@ -76,7 +81,80 @@ const DEFAULT_PRESETS: PresetSeed[] = [
       minDailyUnits: 20,
       hideAnomalies: true,
       excludeRootGroups: ['Ship SKINs', 'Apparel', 'Blueprints & Reactions'],
-      sortBy: 'roiPct',
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    name: 'Best Ammo Types',
+    filters: {
+      marketGroupId: 11,
+      minRoiPct: 10,
+      priceField: 'buy',
+      minDailyIskVolume: 10_000_000,
+      minDailyUnits: 500,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    name: 'Best Modules',
+    filters: {
+      marketGroupId: 9,
+      minRoiPct: 10,
+      minPrice: 100_000,
+      priceField: 'buy',
+      minDailyIskVolume: 20_000_000,
+      minDailyUnits: 5,
+      maxRecentUpdates1h: 18,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    name: 'Best PI Materials',
+    filters: {
+      marketGroupId: 1332,
+      minRoiPct: 10,
+      priceField: 'buy',
+      minDailyIskVolume: 10_000_000,
+      minDailyUnits: 20,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    name: 'Best Construction Components',
+    filters: {
+      marketGroupId: 1035,
+      minRoiPct: 10,
+      minPrice: 10_000,
+      priceField: 'buy',
+      minDailyIskVolume: 15_000_000,
+      minDailyUnits: 5,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    name: 'Best PI & Components',
+    filters: {
+      marketGroupIds: [1332, 1035],
+      minRoiPct: 10,
+      priceField: 'buy',
+      minDailyIskVolume: 10_000_000,
+      minDailyUnits: 5,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
       sortDir: 'desc',
     },
   },
@@ -286,6 +364,44 @@ function createSchema(db: DatabaseSync): void {
       escrow REAL DEFAULT 0,
       updated_at TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS neon_briefings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      provider TEXT NOT NULL,
+      model TEXT NOT NULL,
+      scope_label TEXT NOT NULL,
+      session_style TEXT NOT NULL,
+      budget_isk REAL,
+      user_note TEXT DEFAULT '',
+      response_json TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS item_game_info (
+      type_id INTEGER PRIMARY KEY,
+      payload_json TEXT NOT NULL,
+      fetched_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS dogma_attributes_cache (
+      attribute_id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      display_name TEXT NOT NULL,
+      description TEXT DEFAULT '',
+      unit_id INTEGER,
+      high_is_good INTEGER,
+      published INTEGER DEFAULT 1,
+      stackable INTEGER DEFAULT 1,
+      fetched_at TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS eve_groups_cache (
+      group_id INTEGER PRIMARY KEY,
+      name TEXT NOT NULL,
+      category_id INTEGER NOT NULL,
+      category_name TEXT NOT NULL,
+      fetched_at TEXT NOT NULL
+    );
   `);
 }
 
@@ -296,16 +412,48 @@ function seedDefaults(db: DatabaseSync): void {
       insertSetting.run(key, value);
     }
 
-    const presetCountRow = db.prepare('SELECT COUNT(*) AS cnt FROM filter_presets').get() as
-      | { cnt: number }
-      | undefined;
-    if ((presetCountRow?.cnt ?? 0) === 0) {
-      const now = new Date().toISOString();
-      const insertPreset = db.prepare(
-        'INSERT INTO filter_presets (name, filters_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
-      );
-      for (const preset of DEFAULT_PRESETS) {
-        insertPreset.run(preset.name, JSON.stringify(preset.filters), now, now);
+    const currProviderRow = db
+      .prepare("SELECT value FROM settings WHERE key = 'llm_provider'")
+      .get() as { value: string } | undefined;
+    const currModelRow = db
+      .prepare("SELECT value FROM settings WHERE key = 'llm_model'")
+      .get() as { value: string } | undefined;
+    if (
+      (currProviderRow?.value ?? 'gemini') === 'gemini' &&
+      currModelRow?.value === 'gemini-2.5-flash'
+    ) {
+      db.prepare("UPDATE settings SET value = 'gemini-3.8-flash' WHERE key = 'llm_model'").run();
+    }
+
+    const now = new Date().toISOString();
+    const insertPreset = db.prepare(
+      'INSERT OR IGNORE INTO filter_presets (name, filters_json, created_at, updated_at) VALUES (?, ?, ?, ?)',
+    );
+    for (const preset of DEFAULT_PRESETS) {
+      insertPreset.run(preset.name, JSON.stringify(preset.filters), now, now);
+    }
+
+    const legacyDefaults = [
+      'Balanced Jita Flips',
+      'High-Volume Safe',
+      'Trending Breakouts',
+      'Low-Cap Starter (<10M)',
+    ];
+    const getPreset = db.prepare('SELECT id, filters_json FROM filter_presets WHERE name = ?');
+    const updatePreset = db.prepare(
+      'UPDATE filter_presets SET filters_json = ?, updated_at = ? WHERE id = ?',
+    );
+    for (const name of legacyDefaults) {
+      const existing = getPreset.get(name) as { id: number; filters_json: string } | undefined;
+      if (!existing) continue;
+      try {
+        const parsed = JSON.parse(existing.filters_json) as Record<string, unknown>;
+        if (typeof parsed.minRoiPct !== 'number' || parsed.minRoiPct < 10) {
+          parsed.minRoiPct = 10;
+          updatePreset.run(JSON.stringify(parsed), now, existing.id);
+        }
+      } catch {
+        // ignore malformed custom json
       }
     }
   });

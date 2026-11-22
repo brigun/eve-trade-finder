@@ -1,6 +1,10 @@
 import { Router } from 'express';
 import { refreshSchedulerSchedule } from '../services/scheduler.js';
-import { getAllSettings, updateSettings, type AppSettings } from '../services/settingsService.js';
+import {
+  getAllSettings,
+  updateSettings,
+  type SettingsUpdatePatch,
+} from '../services/settingsService.js';
 import { calculateEveFees } from '../services/tradeAnalytics.js';
 
 export const settingsRouter = Router();
@@ -12,7 +16,7 @@ settingsRouter.get('/', (_req, res) => {
 settingsRouter.put('/', (req, res) => {
   const body = req.body ?? {};
   const current = getAllSettings();
-  const patch: Partial<AppSettings> = {};
+  const patch: SettingsUpdatePatch = {};
 
   if (typeof body.accountingLevel === 'number') patch.accountingLevel = body.accountingLevel;
   if (typeof body.brokerRelationsLevel === 'number') {
@@ -45,6 +49,27 @@ settingsRouter.put('/', (req, res) => {
   if (typeof body.esiClientId === 'string') patch.esiClientId = body.esiClientId.trim();
   if (typeof body.ssoRedirectUri === 'string' && body.ssoRedirectUri.trim()) {
     patch.ssoRedirectUri = body.ssoRedirectUri.trim();
+  }
+  if (body.llmProvider === 'gemini' || body.llmProvider === 'openai_compat') {
+    patch.llmProvider = body.llmProvider;
+  }
+  if (typeof body.llmModel === 'string' && body.llmModel.trim()) {
+    patch.llmModel = body.llmModel.trim();
+  }
+  if (typeof body.llmBaseUrl === 'string' && body.llmBaseUrl.trim()) {
+    patch.llmBaseUrl = body.llmBaseUrl.trim();
+  }
+  if (
+    body.llmThinkingLevel === 'LOW' ||
+    body.llmThinkingLevel === 'MEDIUM' ||
+    body.llmThinkingLevel === 'HIGH'
+  ) {
+    patch.llmThinkingLevel = body.llmThinkingLevel;
+  }
+  if (body.clearLlmApiKey === true) {
+    patch.clearLlmApiKey = true;
+  } else if (typeof body.llmApiKey === 'string' && body.llmApiKey.trim()) {
+    patch.llmApiKey = body.llmApiKey.trim();
   }
 
   const updated = updateSettings(patch);

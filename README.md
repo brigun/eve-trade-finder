@@ -51,3 +51,9 @@ npm test
    - `esi-characters.read_standings.v1`
    - `esi-markets.read_character_orders.v1`
 4. Paste your **Client ID** in **Settings** (or in the **My Orders** tab) and click **Connect via EVE Online SSO**. No client secret is needed because PKCE (`S256`) is used.
+
+## Legal & EVE Online Copyright
+
+© 2026 Fenris Creations. All rights reserved. EVE Online®, Fenris Creations™, the EVE logo, and all associated logos, images, artwork, screenshots, characters, vehicles, storylines, world facts, and Static Data Export (SDE) / ESI game data are the intellectual property and trademarks of Fenris Creations (formerly CCP hf.). All other trademarks are the property of their respective owners.
+
+This application is an independent, non-commercial third-party tool using the official EVE Swagger Interface (ESI), official Static Data Export (SDE), and EVE Online Single Sign-On (SSO) in accordance with the Fenris Creations (EVE Online) Developer License Agreement, and is not affiliated with or endorsed by Fenris Creations.

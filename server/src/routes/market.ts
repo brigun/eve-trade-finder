@@ -1,11 +1,15 @@
 import { Router } from 'express';
+import { EXCLUDED_DEFAULT_GROUPS } from '../config.js';
 import { getDb } from '../db/database.js';
+import { EsiHttpError } from '../services/esiClient.js';
+import { getItemGameInfo } from '../services/gameInfoService.js';
 import { getFeeConfig } from '../services/settingsService.js';
 import {
   computeItemMetrics,
   type AnomalyFlag,
   type HistoryMetricsLike,
   type MarketSummaryLike,
+  type ScoreBreakdown,
 } from '../services/tradeAnalytics.js';
 
 export const marketRouter = Router();
@@ -19,9 +23,9 @@ export interface MarketGroupTreeNode {
   children: MarketGroupTreeNode[];
 }
 
-function getDescendantMarketGroupIds(
+export function getDescendantMarketGroupIds(
   db: ReturnType<typeof getDb>,
-  targetGroupId: number,
+  targetGroupIds: number[],
 ): Set<number> {
   const rows = db
     .prepare('SELECT market_group_id, parent_group_id FROM market_groups')
@@ -39,8 +43,8 @@ function getDescendantMarketGroupIds(
     }
   }
 
-  const result = new Set<number>([targetGroupId]);
-  const queue = [targetGroupId];
+  const result = new Set<number>(targetGroupIds);
+  const queue = [...targetGroupIds];
   while (queue.length > 0) {
     const current = queue.shift()!;
     const kids = childrenByParent.get(current);
@@ -53,6 +57,15 @@ function getDescendantMarketGroupIds(
     }
   }
   return result;
+}
+
+export function getGroupScopeLabel(db: ReturnType<typeof getDb>, targetGroupIds: number[]): string {
+  if (targetGroupIds.length === 0) return 'Overall Jita 4-4';
+  const stmt = db.prepare('SELECT name FROM market_groups WHERE market_group_id = ?');
+  const names = targetGroupIds
+    .map((id) => (stmt.get(id) as { name?: string } | undefined)?.name)
+    .filter((n): n is string => Boolean(n));
+  return names.length > 0 ? names.join(' + ') : 'Selected Segment';
 }
 
 function buildMarketGroupTree(db: ReturnType<typeof getDb>): MarketGroupTreeNode[] {
@@ -202,6 +215,11 @@ export interface MarketItemDto {
   roiPct: number;
   netMarginPct: number;
   estDailyProfit: number | null;
+  bidDepthIsk: number;
+  askDepthIsk: number;
+  bookDepthIsk: number;
+  tradeScore: number;
+  scoreBreakdown: ScoreBreakdown;
   hasHistory: boolean;
   dailyVolume7d: number | null;
   dailyVolume30d: number | null;
@@ -238,7 +256,15 @@ function parseGroupList(val: unknown): string[] {
     .filter(Boolean);
 }
 
-function buildItemDto(row: RawScannerRow, fees: ReturnType<typeof getFeeConfig>): MarketItemDto {
+function parseIdList(val: unknown): number[] {
+  if (typeof val !== 'string' || !val.trim()) return [];
+  return val
+    .split(',')
+    .map((s) => Number.parseInt(s.trim(), 10))
+    .filter((n) => Number.isFinite(n) && n > 0);
+}
+
+export function buildItemDto(row: RawScannerRow, fees: ReturnType<typeof getFeeConfig>): MarketItemDto {
   const hasHistory = row.history_updated_at !== null;
   const history: HistoryMetricsLike | null = hasHistory
     ? {
@@ -282,6 +308,11 @@ function buildItemDto(row: RawScannerRow, fees: ReturnType<typeof getFeeConfig>)
     roiPct: computed.roiPct,
     netMarginPct: computed.netMarginPct,
     estDailyProfit: computed.estDailyProfit,
+    bidDepthIsk: computed.bidDepthIsk,
+    askDepthIsk: computed.askDepthIsk,
+    bookDepthIsk: computed.bookDepthIsk,
+    tradeScore: computed.tradeScore,
+    scoreBreakdown: computed.scoreBreakdown,
     hasHistory,
     dailyVolume7d: hasHistory ? row.daily_volume_7d : null,
     dailyVolume30d: hasHistory ? row.daily_volume_30d : null,
@@ -301,7 +332,7 @@ function buildItemDto(row: RawScannerRow, fees: ReturnType<typeof getFeeConfig>)
   };
 }
 
-function loadScannerRows(): RawScannerRow[] {
+export function loadScannerRows(): RawScannerRow[] {
   const db = getDb();
   return db
     .prepare(`
@@ -353,15 +384,20 @@ marketRouter.get('/items', (req, res) => {
   const maxRecentUpdates1h = parseOptionalNumber(req.query.maxRecentUpdates1h);
   const includeRootGroups = new Set(parseGroupList(req.query.includeRootGroups));
   const excludeRootGroups = new Set(parseGroupList(req.query.excludeRootGroups));
-  const marketGroupId = parseOptionalNumber(req.query.marketGroupId);
+  const singleGroupId = parseOptionalNumber(req.query.marketGroupId);
+  const multiGroupIds = parseIdList(req.query.marketGroupIds);
+  const targetGroupIds = [
+    ...(singleGroupId !== null && singleGroupId > 0 ? [Math.floor(singleGroupId)] : []),
+    ...multiGroupIds,
+  ];
   const allowedMarketGroupIds =
-    marketGroupId !== null ? getDescendantMarketGroupIds(getDb(), Math.floor(marketGroupId)) : null;
+    targetGroupIds.length > 0 ? getDescendantMarketGroupIds(getDb(), targetGroupIds) : null;
   const trendingOnly = parseBool(req.query.trendingOnly);
   const hideAnomalies = parseBool(req.query.hideAnomalies);
   const watchlistOnly = parseBool(req.query.watchlistOnly);
   const requireHistory = parseBool(req.query.requireHistory);
 
-  const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'estDailyProfit';
+  const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'tradeScore';
   const sortDir = req.query.sortDir === 'asc' ? 'asc' : 'desc';
   const page = Math.max(1, Math.floor(parseOptionalNumber(req.query.page) ?? 1));
   const pageSize = Math.min(200, Math.max(10, Math.floor(parseOptionalNumber(req.query.pageSize) ?? 50)));
@@ -417,6 +453,10 @@ marketRouter.get('/items', (req, res) => {
         return item.netProfit;
       case 'roiPct':
         return item.roiPct;
+      case 'tradeScore':
+        return item.tradeScore;
+      case 'bookDepthIsk':
+        return item.bookDepthIsk;
       case 'estDailyProfit':
         return item.estDailyProfit;
       case 'dailyIskVolume7d':
@@ -432,7 +472,7 @@ marketRouter.get('/items', (req, res) => {
       case 'recentUpdates1h':
         return item.recentUpdates1h;
       default:
-        return item.estDailyProfit;
+        return item.tradeScore;
     }
   };
 
@@ -545,6 +585,96 @@ marketRouter.get('/groups', (_req, res) => {
 
   const tree = buildMarketGroupTree(db);
   res.json({ groups: groups.map((g) => ({ ...g })), tree });
+});
+
+marketRouter.get('/recommended', (req, res) => {
+  const db = getDb();
+  const fees = getFeeConfig();
+  const rows = loadScannerRows();
+
+  const minRoiPct = parseOptionalNumber(req.query.minRoiPct) ?? 10;
+  const limit = Math.min(5, Math.max(1, Math.floor(parseOptionalNumber(req.query.limit) ?? 3)));
+  const singleGroupId = parseOptionalNumber(req.query.marketGroupId);
+  const multiGroupIds = parseIdList(req.query.marketGroupIds);
+  const targetGroupIds = [
+    ...(singleGroupId !== null && singleGroupId > 0 ? [Math.floor(singleGroupId)] : []),
+    ...multiGroupIds,
+  ];
+  const allowedMarketGroupIds =
+    targetGroupIds.length > 0 ? getDescendantMarketGroupIds(db, targetGroupIds) : null;
+  const defaultExcluded = new Set(EXCLUDED_DEFAULT_GROUPS);
+
+  const scopedDtos: MarketItemDto[] = [];
+  for (const row of rows) {
+    const item = buildItemDto(row, fees);
+    if (allowedMarketGroupIds !== null) {
+      if (item.marketGroupId === null || !allowedMarketGroupIds.has(item.marketGroupId)) continue;
+    } else if (defaultExcluded.has(item.rootGroupName)) {
+      continue;
+    }
+    scopedDtos.push(item);
+  }
+
+  let candidates = scopedDtos.filter(
+    (item) =>
+      item.roiPct >= minRoiPct &&
+      !item.hasAnomaly &&
+      item.hasHistory &&
+      (item.activeDays30d ?? 0) >= 7 &&
+      (item.dailyIskVolume7d ?? 0) >= 10_000_000 &&
+      (item.dailyVolume7d ?? 0) >= 2 &&
+      item.buyOrderCount >= 2 &&
+      item.sellOrderCount >= 2,
+  );
+
+  let fallbackUsed = false;
+  if (candidates.length === 0) {
+    fallbackUsed = true;
+    candidates = scopedDtos.filter(
+      (item) =>
+        item.roiPct >= minRoiPct &&
+        !item.hasCriticalAnomaly &&
+        item.buyOrderCount >= 1 &&
+        item.sellOrderCount >= 1,
+    );
+  }
+
+  candidates.sort((a, b) => {
+    if (b.tradeScore !== a.tradeScore) return b.tradeScore - a.tradeScore;
+    return (b.estDailyProfit ?? 0) - (a.estDailyProfit ?? 0);
+  });
+
+  const selected = candidates.slice(0, limit);
+  res.json({
+    top: selected[0] ?? null,
+    runnersUp: selected.slice(1),
+    scopeLabel: getGroupScopeLabel(db, targetGroupIds),
+    minRoiPct,
+    evaluatedCount: candidates.length,
+    fallbackUsed,
+    fees,
+  });
+});
+
+marketRouter.get('/items/:typeId/game-info', async (req, res) => {
+  const typeId = Number.parseInt(req.params.typeId, 10);
+  if (!Number.isFinite(typeId) || typeId <= 0) {
+    res.status(400).json({ error: 'Invalid typeId' });
+    return;
+  }
+
+  const force = parseBool(req.query.force);
+  try {
+    const gameInfo = await getItemGameInfo(typeId, force);
+    res.json({ gameInfo });
+  } catch (err) {
+    if (err instanceof EsiHttpError && err.status === 404) {
+      res.status(404).json({ error: 'Item not found in EVE Online ESI.' });
+      return;
+    }
+    const message = err instanceof Error ? err.message : 'Failed to load EVE Online item info';
+    res.status(502).json({ error: message });
+  }
 });
 
 marketRouter.get('/items/:typeId', (req, res) => {

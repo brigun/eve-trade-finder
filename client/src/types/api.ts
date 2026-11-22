@@ -43,6 +43,11 @@ export interface MarketItem {
   roiPct: number;
   netMarginPct: number;
   estDailyProfit: number | null;
+  bidDepthIsk: number;
+  askDepthIsk: number;
+  bookDepthIsk: number;
+  tradeScore: number;
+  scoreBreakdown: ScoreBreakdown;
   hasHistory: boolean;
   dailyVolume7d: number | null;
   dailyVolume30d: number | null;
@@ -59,6 +64,25 @@ export interface MarketItem {
   isWatchlisted: boolean;
   hasCharacterOrder: boolean;
   updatedAt: string;
+}
+
+export interface ScoreBreakdown {
+  profitScore: number;
+  salesVolumeScore: number;
+  bookDepthScore: number;
+  competitionScore: number;
+  momentumBonus: number;
+  riskPenalty: number;
+}
+
+export interface RecommendedTradesResponse {
+  top: MarketItem | null;
+  runnersUp: MarketItem[];
+  scopeLabel: string;
+  minRoiPct: number;
+  evaluatedCount: number;
+  fallbackUsed: boolean;
+  fees: FeeConfig;
 }
 
 export interface MarketItemsResponse {
@@ -219,6 +243,7 @@ export interface FilterState {
   includeRootGroups: string[];
   excludeRootGroups: string[];
   marketGroupId: number | null;
+  marketGroupIds: number[];
   trendingOnly: boolean;
   hideAnomalies: boolean;
   watchlistOnly: boolean;
@@ -267,6 +292,66 @@ export interface AppSettings {
   captureSharePct: number;
   esiClientId: string;
   ssoRedirectUri: string;
+  llmProvider: 'gemini' | 'openai_compat';
+  llmModel: string;
+  llmBaseUrl: string;
+  llmThinkingLevel: LlmThinkingLevel;
+  llmApiKeyConfigured: boolean;
+  llmApiKeySource: 'env' | 'settings' | 'none';
+}
+
+export type LlmThinkingLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+export type NeonSessionStyle = 'quick_flip' | 'balanced' | 'overnight';
+
+export interface NeonTradePick {
+  rank: number;
+  typeId: number;
+  headline: string;
+  rationale: string;
+  executionPlan: string;
+  riskNote: string;
+  suggestedQty: number;
+  estimatedCapitalIsk: number;
+  estimatedNetProfitIsk: number;
+  outbidBuyPrice: number;
+  undercutSellPrice: number;
+  item: MarketItem;
+}
+
+export interface NeonBriefingResponse {
+  id: number;
+  createdAt: string;
+  provider: 'gemini' | 'openai_compat';
+  model: string;
+  scopeLabel: string;
+  sessionStyle: NeonSessionStyle;
+  budgetIsk: number | null;
+  userNote: string;
+  minRoiPct: number;
+  candidateCount: number;
+  sessionSummary: string;
+  recommendations: NeonTradePick[];
+}
+
+export interface NeonAdvisorStatus {
+  provider: 'gemini' | 'openai_compat';
+  model: string;
+  baseUrl: string;
+  thinkingLevel: LlmThinkingLevel;
+  configured: boolean;
+  keySource: 'env' | 'settings' | 'none';
+}
+
+export interface LlmModelOption {
+  id: string;
+  displayName: string;
+}
+
+export interface LlmModelsResponse {
+  provider: 'gemini' | 'openai_compat';
+  activeModel: string;
+  source: 'live' | 'fallback';
+  models: LlmModelOption[];
 }
 
 export interface SsoStatusResponse {
@@ -297,4 +382,57 @@ export interface CharacterOrderItem {
   status: 'BEST' | 'UNDERCUT' | 'OUTBID' | 'NO_MARKET';
   deltaIsk: number;
   suggestedRelistPrice: number | null;
+}
+
+export interface DescriptionSegment {
+  text: string;
+  bold?: boolean;
+  italic?: boolean;
+  showInfoTypeId?: number;
+  loreLink?: boolean;
+}
+
+export interface GameInfoSkillReq {
+  skillTypeId: number;
+  skillName: string;
+  level: number;
+  levelRoman: string;
+}
+
+export interface GameInfoAttribute {
+  attributeId: number;
+  name: string;
+  displayName: string;
+  description: string;
+  rawValue: number;
+  formattedValue: string;
+  unitId: number | null;
+}
+
+export interface ItemGameInfo {
+  typeId: number;
+  name: string;
+  groupId: number;
+  groupName: string;
+  categoryId: number;
+  categoryName: string;
+  marketGroupPath: string[];
+  marketGroupDescription: string;
+  descriptionRaw: string;
+  descriptionParagraphs: DescriptionSegment[][];
+  metaLevel: number | null;
+  techLevel: number | null;
+  metaGroupLabel: string | null;
+  volume: number | null;
+  packagedVolume: number | null;
+  mass: number | null;
+  capacity: number | null;
+  portionSize: number | null;
+  radius: number | null;
+  published: boolean;
+  supportsRender: boolean;
+  requiredSkills: GameInfoSkillReq[];
+  attributes: GameInfoAttribute[];
+  fetchedAt: string;
+  cached: boolean;
 }

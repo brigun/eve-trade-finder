@@ -163,6 +163,13 @@ export function MyOrdersView({
             <span>Connect via EVE Online SSO</span>
           </button>
         </div>
+
+        <p className="text-[11px] text-[#656A7C] leading-relaxed">
+          Authentication uses official EVE Online SSO (OAuth2 + PKCE) on{' '}
+          <span className="font-mono-num text-[#9CA0B0]">login.eveonline.com</span>; your EVE Online
+          credentials are never entered into or stored by this local tool. Read-only scopes are used
+          strictly in accordance with the Fenris Creations (EVE Online) Developer License Agreement.
+        </p>
       </div>
     );
   }

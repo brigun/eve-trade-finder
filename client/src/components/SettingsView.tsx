@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react';
-import { Calculator, Database, RefreshCw, Save, ShieldCheck } from 'lucide-react';
+import { Bot, Calculator, Database, RefreshCw, Save, ShieldCheck } from 'lucide-react';
 import { api } from '../lib/api.ts';
 import { formatRelativeTime } from '../lib/format.ts';
-import type { AppSettings, SyncStatusResponse } from '../types/api.ts';
+import type {
+  AppSettings,
+  LlmModelOption,
+  LlmThinkingLevel,
+  SyncStatusResponse,
+} from '../types/api.ts';
 
 interface SettingsViewProps {
   syncStatus: SyncStatusResponse | null;
@@ -20,6 +25,9 @@ export function SettingsView({
   onNotify,
 }: SettingsViewProps) {
   const [form, setForm] = useState<AppSettings | null>(null);
+  const [apiKeyDraft, setApiKeyDraft] = useState('');
+  const [discoveredModels, setDiscoveredModels] = useState<LlmModelOption[]>([]);
+  const [discoveringModels, setDiscoveringModels] = useState(false);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
@@ -34,16 +42,27 @@ export function SettingsView({
     );
   }
 
-  const saveAll = async (recalculateFromSkills = false) => {
+  const saveAll = async (recalculateFromSkills = false, clearLlmApiKey = false) => {
     setSaving(true);
     try {
-      const res = await api.updateSettings({ ...form, recalculateFromSkills });
+      const res = await api.updateSettings({
+        ...form,
+        recalculateFromSkills,
+        ...(clearLlmApiKey
+          ? { clearLlmApiKey: true }
+          : apiKeyDraft.trim()
+            ? { llmApiKey: apiKeyDraft.trim() }
+            : {}),
+      });
       setForm(res.settings);
+      setApiKeyDraft('');
       await onSettingsUpdated();
       onNotify(
-        recalculateFromSkills
-          ? `Recalculated Jita fees: ${res.settings.brokerFeePct}% broker · ${res.settings.salesTaxPct}% tax`
-          : 'Saved settings to SQLite',
+        clearLlmApiKey
+          ? 'Cleared saved LLM API key'
+          : recalculateFromSkills
+            ? `Recalculated Jita fees: ${res.settings.brokerFeePct}% broker · ${res.settings.salesTaxPct}% tax`
+            : 'Saved settings to SQLite',
       );
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'Failed to save settings');
@@ -305,6 +324,207 @@ export function SettingsView({
           </div>
         </section>
       </div>
+
+      {/* Neon LLM Advisor Configuration */}
+      <section className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md p-5 space-y-4">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Bot className="w-4 h-4 text-[#9B7BFF]" />
+            <h2 className="font-display text-sm font-semibold text-[#EFEAE0]">
+              Neon LLM Advisor Configuration
+            </h2>
+          </div>
+          <span
+            className={`px-2 py-0.5 rounded font-mono-num text-[10px] border ${
+              form.llmProvider === 'openai_compat' || form.llmApiKeyConfigured
+                ? 'bg-[#46E595]/15 text-[#46E595] border-[#46E595]/35'
+                : 'bg-[#FF4D6D]/15 text-[#FF4D6D] border-[#FF4D6D]/40'
+            }`}
+          >
+            {form.llmApiKeyConfigured
+              ? `KEY READY (${form.llmApiKeySource.toUpperCase()})`
+              : form.llmProvider === 'openai_compat'
+                ? 'LOCAL / COMPAT ENDPOINT'
+                : 'API KEY REQUIRED'}
+          </span>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
+              LLM Provider
+            </span>
+            <select
+              value={form.llmProvider}
+              onChange={(e) => {
+                const nextProvider =
+                  e.target.value === 'openai_compat' ? 'openai_compat' : 'gemini';
+                setForm({
+                  ...form,
+                  llmProvider: nextProvider,
+                  llmModel:
+                    nextProvider === 'gemini' && form.llmModel === 'llama3.2'
+                      ? 'gemini-3.8-flash'
+                      : nextProvider === 'openai_compat' && form.llmModel.startsWith('gemini-')
+                        ? 'llama3.2'
+                        : form.llmModel,
+                });
+              }}
+              className="px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs text-[#EFEAE0]"
+            >
+              <option value="gemini">Google Gemini API</option>
+              <option value="openai_compat">OpenAI-Compatible / Local Ollama</option>
+            </select>
+          </label>
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
+              Model Name
+            </span>
+            <input
+              type="text"
+              value={form.llmModel}
+              onChange={(e) => setForm({ ...form, llmModel: e.target.value })}
+              placeholder={form.llmProvider === 'gemini' ? 'gemini-3.8-flash' : 'llama3.2'}
+              className="px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
+            />
+          </label>
+
+          {form.llmProvider === 'openai_compat' ? (
+            <label className="flex flex-col gap-1">
+              <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
+                Base URL (OpenAI v1)
+              </span>
+              <input
+                type="text"
+                value={form.llmBaseUrl}
+                onChange={(e) => setForm({ ...form, llmBaseUrl: e.target.value })}
+                placeholder="http://localhost:11434/v1"
+                className="px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
+              />
+            </label>
+          ) : (
+            <div className="flex flex-col gap-1">
+              <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
+                Thinking Level & Presets
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {(['LOW', 'MEDIUM', 'HIGH'] as LlmThinkingLevel[]).map((lvl) => (
+                  <button
+                    key={lvl}
+                    type="button"
+                    onClick={() => setForm({ ...form, llmThinkingLevel: lvl })}
+                    className={`px-2 py-1 rounded text-[11px] font-mono-num border cursor-pointer ${
+                      form.llmThinkingLevel === lvl
+                        ? 'bg-[#46E595]/18 text-[#46E595] border-[#46E595]/50'
+                        : 'bg-[#161923] text-[#9CA0B0] border-[#262938]'
+                    }`}
+                  >
+                    {lvl}
+                  </button>
+                ))}
+                {['gemini-3.8-flash', 'gemini-4-neon', 'gemini-4-hydrogen'].map((m) => (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => setForm({ ...form, llmModel: m })}
+                    className={`px-2 py-1 rounded text-[11px] font-mono-num border cursor-pointer ${
+                      form.llmModel === m
+                        ? 'bg-[#9B7BFF]/20 text-[#EFEAE0] border-[#9B7BFF]/55'
+                        : 'bg-[#161923] text-[#9CA0B0] border-[#262938]'
+                    }`}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          <label className="flex flex-col gap-1">
+            <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
+              API Key ({form.llmApiKeyConfigured ? 'Saved — enter to replace' : 'Write-Only'})
+            </span>
+            <input
+              type="password"
+              value={apiKeyDraft}
+              onChange={(e) => setApiKeyDraft(e.target.value)}
+              placeholder={
+                form.llmProvider === 'openai_compat'
+                  ? 'Optional for local Ollama'
+                  : 'Paste GEMINI_API_KEY...'
+              }
+              className="px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
+            />
+          </label>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => void saveAll(false)}
+            className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded bg-[#9B7BFF] text-[#08090D] font-semibold text-xs hover:bg-[#B298FF] cursor-pointer"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>Save LLM Settings</span>
+          </button>
+          <button
+            type="button"
+            disabled={discoveringModels}
+            onClick={async () => {
+              setDiscoveringModels(true);
+              try {
+                const res = await api.getAdvisorModels();
+                setDiscoveredModels(res.models);
+                onNotify(
+                  res.source === 'live'
+                    ? `Discovered ${res.models.length} live models from ${res.provider}`
+                    : `Loaded ${res.models.length} curated ${res.provider} models`,
+                );
+              } finally {
+                setDiscoveringModels(false);
+              }
+            }}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#9B7BFF] text-xs text-[#EFEAE0] cursor-pointer"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 text-[#9B7BFF] ${discoveringModels ? 'animate-spin' : ''}`} />
+            <span>Fetch Live Models</span>
+          </button>
+          {form.llmApiKeyConfigured && form.llmApiKeySource === 'settings' && (
+            <button
+              type="button"
+              disabled={saving}
+              onClick={() => void saveAll(false, true)}
+              className="px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#FF4D6D] text-xs text-[#9CA0B0] hover:text-[#FF4D6D] cursor-pointer"
+            >
+              Clear Saved Key
+            </button>
+          )}
+        </div>
+
+        {discoveredModels.length > 0 && (
+          <div className="pt-2 border-t border-[#262938] flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] font-mono-num uppercase text-[#656A7C] mr-1">
+              Click to select:
+            </span>
+            {discoveredModels.slice(0, 14).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => setForm({ ...form, llmModel: m.id })}
+                className={`px-2 py-0.5 rounded text-[11px] font-mono-num border cursor-pointer ${
+                  form.llmModel === m.id
+                    ? 'bg-[#46E595]/18 text-[#46E595] border-[#46E595]/45'
+                    : 'bg-[#08090D] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
+                }`}
+              >
+                {m.id}
+              </button>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Persisted SQLite Sync Audit Log */}
       <section className="bg-[#0F1118] border border-[#262938] rounded-md overflow-hidden">

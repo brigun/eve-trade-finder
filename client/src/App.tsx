@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { AskNeonModal } from './components/AskNeonModal.tsx';
 import { FilterBar } from './components/FilterBar.tsx';
 import { ItemDrawer } from './components/ItemDrawer.tsx';
 import { KpiRibbon } from './components/KpiRibbon.tsx';
 import { MarketTable } from './components/MarketTable.tsx';
 import { MyOrdersView } from './components/MyOrdersView.tsx';
+import { RecommendedTradeCard } from './components/RecommendedTradeCard.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
 import { TopBar, type AppTab } from './components/TopBar.tsx';
 import { WatchlistView } from './components/WatchlistView.tsx';
@@ -16,13 +18,14 @@ import type {
   MarketGroupTreeNode,
   MarketItem,
   MarketStats,
+  RecommendedTradesResponse,
   SsoStatusResponse,
   SyncStatusResponse,
 } from './types/api.ts';
 
 const DEFAULT_FILTERS: FilterState = {
   q: '',
-  minRoiPct: 5,
+  minRoiPct: 10,
   maxRoiPct: null,
   minPrice: 50_000,
   maxPrice: null,
@@ -35,11 +38,12 @@ const DEFAULT_FILTERS: FilterState = {
   includeRootGroups: [],
   excludeRootGroups: ['Ship SKINs', 'Apparel', 'Blueprints & Reactions'],
   marketGroupId: null,
+  marketGroupIds: [],
   trendingOnly: false,
   hideAnomalies: true,
   watchlistOnly: false,
   requireHistory: false,
-  sortBy: 'estDailyProfit',
+  sortBy: 'tradeScore',
   sortDir: 'desc',
 };
 
@@ -64,6 +68,8 @@ export default function App() {
     captureSharePct: 15,
   });
   const [loadingItems, setLoadingItems] = useState(true);
+  const [recommended, setRecommended] = useState<RecommendedTradesResponse | null>(null);
+  const [loadingRecommended, setLoadingRecommended] = useState(true);
 
   const [stats, setStats] = useState<MarketStats | null>(null);
   const [groupTree, setGroupTree] = useState<MarketGroupTreeNode[]>([]);
@@ -73,6 +79,7 @@ export default function App() {
   const [undercutCount, setUndercutCount] = useState(0);
 
   const [selectedTypeId, setSelectedTypeId] = useState<number | null>(null);
+  const [askNeonOpen, setAskNeonOpen] = useState(false);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
@@ -125,6 +132,22 @@ export default function App() {
     }
   }, [filters, page, notify]);
 
+  const loadRecommended = useCallback(async () => {
+    setLoadingRecommended(true);
+    try {
+      const res = await api.getRecommendedTrades({
+        minRoiPct: filters.minRoiPct ?? 10,
+        marketGroupId: filters.marketGroupId,
+        marketGroupIds: filters.marketGroupIds,
+      });
+      setRecommended(res);
+    } catch {
+      // keep existing recommendation on transient fetch error
+    } finally {
+      setLoadingRecommended(false);
+    }
+  }, [filters.minRoiPct, filters.marketGroupId, filters.marketGroupIds]);
+
   useEffect(() => {
     void loadMeta();
   }, [loadMeta]);
@@ -136,6 +159,13 @@ export default function App() {
     return () => window.clearTimeout(timer);
   }, [loadItems]);
 
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      void loadRecommended();
+    }, 120);
+    return () => window.clearTimeout(timer);
+  }, [loadRecommended]);
+
   // Poll sync progress cleanly while active (and slow refresh when idle)
   useEffect(() => {
     const running =
@@ -146,6 +176,7 @@ export default function App() {
     if (wasRunningRef.current && !running) {
       void loadMeta();
       void loadItems();
+      void loadRecommended();
     }
     wasRunningRef.current = running;
 
@@ -166,6 +197,7 @@ export default function App() {
     syncStatus?.sdeSync.running,
     loadMeta,
     loadItems,
+    loadRecommended,
   ]);
 
   const handleSyncOrders = async () => {
@@ -274,6 +306,7 @@ export default function App() {
         undercutCount={undercutCount}
         onSyncOrders={() => void handleSyncOrders()}
         onBackfillHistory={() => void handleBackfillHistory()}
+        onAskNeon={() => setAskNeonOpen(true)}
       />
 
       <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
@@ -328,6 +361,14 @@ export default function App() {
               onToggleTrending={() =>
                 handleFilterChange({ ...filters, trendingOnly: !filters.trendingOnly })
               }
+            />
+
+            <RecommendedTradeCard
+              recommended={recommended}
+              loading={loadingRecommended}
+              onSelectItem={(item) => setSelectedTypeId(item.typeId)}
+              onAskNeon={() => setAskNeonOpen(true)}
+              onNotify={notify}
             />
 
             <FilterBar
@@ -385,7 +426,7 @@ export default function App() {
           <SettingsView
             syncStatus={syncStatus}
             onSettingsUpdated={async () => {
-              await Promise.all([loadMeta(), loadItems()]);
+              await Promise.all([loadMeta(), loadItems(), loadRecommended()]);
             }}
             onTriggerSde={() => void handleTriggerSde()}
             onTriggerBackfill={() => void handleBackfillHistory()}
@@ -394,10 +435,55 @@ export default function App() {
         )}
       </main>
 
+      <footer className="border-t border-[#262938] bg-[#0F1118]/90 mt-6">
+        <div className="max-w-[1640px] mx-auto px-4 sm:px-6 py-4 flex flex-col md:flex-row md:items-center justify-between gap-3 text-[11px] text-[#656A7C]">
+          <p className="leading-relaxed max-w-4xl">
+            © 2026 Fenris Creations. All rights reserved.{' '}
+            <span className="text-[#9CA0B0]">EVE Online®</span>,{' '}
+            <span className="text-[#9CA0B0]">Fenris Creations™</span>, the EVE logo, and all
+            associated logos, designs, artwork, screenshots, characters, vehicles, storylines, world
+            facts, and game data (ESI &amp; SDE) are the intellectual property and trademarks of
+            Fenris Creations (formerly CCP hf.). All other trademarks are the property of their
+            respective owners. This application is an independent third-party tool and is not
+            endorsed by or affiliated with Fenris Creations.
+          </p>
+          <div className="flex flex-wrap items-center gap-3 font-mono-num text-[10px] shrink-0">
+            <span>Market data via EVE ESI &amp; Official SDE · Auth via EVE SSO</span>
+            <a
+              href="https://www.eveonline.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#B298FF] hover:underline"
+            >
+              EVE Online
+            </a>
+            <a
+              href="https://developers.eveonline.com"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#B298FF] hover:underline"
+            >
+              EVE Developers
+            </a>
+          </div>
+        </div>
+      </footer>
+
       <ItemDrawer
         typeId={selectedTypeId}
         onClose={() => setSelectedTypeId(null)}
         onWatchlistChanged={() => void Promise.all([loadMeta(), loadItems()])}
+        onNotify={notify}
+      />
+
+      <AskNeonModal
+        open={askNeonOpen}
+        minRoiPct={filters.minRoiPct}
+        marketGroupId={filters.marketGroupId}
+        marketGroupIds={filters.marketGroupIds}
+        onClose={() => setAskNeonOpen(false)}
+        onSelectTypeId={setSelectedTypeId}
+        onOpenSettings={() => setActiveTab('settings')}
         onNotify={notify}
       />
 

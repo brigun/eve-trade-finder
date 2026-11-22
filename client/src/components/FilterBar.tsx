@@ -8,7 +8,9 @@ import {
   Search,
   ShieldAlert,
   SlidersHorizontal,
+  Sparkles,
   Trash2,
+  X,
 } from 'lucide-react';
 import { formatShorthandInput, parseIskShorthand } from '../lib/format.ts';
 import type { FilterPreset, FilterState, MarketGroupTreeNode } from '../types/api.ts';
@@ -120,6 +122,91 @@ function PercentInput({
 }
 
 const QUICK_EXCLUDE_GROUPS = ['Ship SKINs', 'Apparel', 'Blueprints & Reactions'];
+
+const CURATED_SEGMENTS: Array<{
+  label: string;
+  presetName: string;
+  fallback: Partial<FilterState>;
+}> = [
+  {
+    label: 'Best Ammo',
+    presetName: 'Best Ammo Types',
+    fallback: {
+      marketGroupId: 11,
+      marketGroupIds: [],
+      minRoiPct: 10,
+      minDailyIskVolume: 10_000_000,
+      minDailyUnits: 500,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    label: 'Best Modules',
+    presetName: 'Best Modules',
+    fallback: {
+      marketGroupId: 9,
+      marketGroupIds: [],
+      minRoiPct: 10,
+      minPrice: 100_000,
+      minDailyIskVolume: 20_000_000,
+      minDailyUnits: 5,
+      maxRecentUpdates1h: 18,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    label: 'Best PI Materials',
+    presetName: 'Best PI Materials',
+    fallback: {
+      marketGroupId: 1332,
+      marketGroupIds: [],
+      minRoiPct: 10,
+      minDailyIskVolume: 10_000_000,
+      minDailyUnits: 20,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    label: 'Best Components',
+    presetName: 'Best Construction Components',
+    fallback: {
+      marketGroupId: 1035,
+      marketGroupIds: [],
+      minRoiPct: 10,
+      minPrice: 10_000,
+      minDailyIskVolume: 15_000_000,
+      minDailyUnits: 5,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+  {
+    label: 'Best PI & Components',
+    presetName: 'Best PI & Components',
+    fallback: {
+      marketGroupId: null,
+      marketGroupIds: [1332, 1035],
+      minRoiPct: 10,
+      minDailyIskVolume: 10_000_000,
+      minDailyUnits: 5,
+      hideAnomalies: true,
+      requireHistory: true,
+      sortBy: 'tradeScore',
+      sortDir: 'desc',
+    },
+  },
+];
 
 export function FilterBar({
   filters,
@@ -385,6 +472,52 @@ export function FilterBar({
             />
           </div>
 
+          {/* Curated Segment Quick Filters */}
+          <div className="flex flex-wrap items-center gap-1.5 text-xs">
+            <span className="inline-flex items-center gap-1 text-[10px] font-mono-num uppercase tracking-wider text-[#B298FF] mr-1">
+              <Sparkles className="w-3 h-3" />
+              Curated Filters:
+            </span>
+            {CURATED_SEGMENTS.map((seg) => {
+              const matchingPreset = presets.find((p) => p.name === seg.presetName);
+              const isActive =
+                activePresetName === seg.presetName ||
+                (seg.fallback.marketGroupId !== null &&
+                  seg.fallback.marketGroupId !== undefined &&
+                  filters.marketGroupId === seg.fallback.marketGroupId &&
+                  filters.marketGroupIds.length === 0) ||
+                (seg.fallback.marketGroupIds &&
+                  seg.fallback.marketGroupIds.length > 0 &&
+                  filters.marketGroupIds.join(',') === seg.fallback.marketGroupIds.join(','));
+
+              return (
+                <button
+                  key={seg.presetName}
+                  type="button"
+                  onClick={() => {
+                    if (matchingPreset) {
+                      onApplyPreset(matchingPreset);
+                    } else {
+                      onChange({
+                        ...filters,
+                        includeRootGroups: [],
+                        excludeRootGroups: [],
+                        ...seg.fallback,
+                      });
+                    }
+                  }}
+                  className={`px-2.5 py-1 rounded text-[11px] font-medium border transition-colors cursor-pointer ${
+                    isActive
+                      ? 'bg-[#9B7BFF]/22 text-[#EFEAE0] border-[#9B7BFF]/65'
+                      : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:border-[#9B7BFF]/45 hover:text-[#EFEAE0]'
+                  }`}
+                >
+                  {seg.label}
+                </button>
+              );
+            })}
+          </div>
+
           {/* Market Category Filter Row */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
             <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C]">
@@ -397,10 +530,29 @@ export function FilterBar({
                 onChange({
                   ...filters,
                   marketGroupId: groupId,
+                  marketGroupIds: [],
                   includeRootGroups: [],
                 })
               }
             />
+
+            {filters.marketGroupIds.length > 0 && (
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#9B7BFF]/18 border border-[#9B7BFF]/45 text-[11px] font-mono-num text-[#EFEAE0]">
+                <span>
+                  {filters.marketGroupIds.join(',') === '1332,1035'
+                    ? 'PI Materials + Construction Components'
+                    : `${filters.marketGroupIds.length} Segments Selected`}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onChange({ ...filters, marketGroupIds: [] })}
+                  aria-label="Clear multi-segment filter"
+                  className="text-[#9CA0B0] hover:text-[#FF4D6D] cursor-pointer"
+                >
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            )}
 
             <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C] ml-2">
               Quick Excludes:
@@ -422,7 +574,7 @@ export function FilterBar({
                 </button>
               );
             })}
-            {filters.marketGroupId !== null && (
+            {(filters.marketGroupId !== null || filters.marketGroupIds.length > 0) && (
               <span className="text-[10px] font-mono-num text-[#656A7C]">
                 (overridden by selected segment)
               </span>
