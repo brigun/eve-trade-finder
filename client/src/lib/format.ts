@@ -56,12 +56,47 @@ export function parseIskShorthand(raw: string): number | null {
   return base;
 }
 
+export function formatIskInput(val: number | null | undefined, maxDecimals = 2): string {
+  if (val === null || val === undefined || !Number.isFinite(val)) return '';
+  return val.toLocaleString('en-US', {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxDecimals,
+  });
+}
+
+export function formatIntInput(val: number | null | undefined): string {
+  if (val === null || val === undefined || !Number.isFinite(val)) return '';
+  return Math.round(val).toLocaleString('en-US', {
+    maximumFractionDigits: 0,
+  });
+}
+
+export function formatLiveNumericInput(raw: string, allowDecimal = true): string {
+  if (!raw) return '';
+  // Preserve shorthand input (e.g. 10m, 500k, 1.5b) while typing; normalized on blur
+  if (/[kmb]/i.test(raw)) return raw;
+
+  const noCommas = raw.replace(/,/g, '');
+  if (!allowDecimal) {
+    const digitsOnly = noCommas.replace(/[^0-9]/g, '');
+    return digitsOnly.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  }
+
+  const cleaned = noCommas.replace(/[^0-9.]/g, '');
+  const dotIdx = cleaned.indexOf('.');
+  const hasDot = dotIdx !== -1;
+  const intPart = hasDot ? cleaned.slice(0, dotIdx) : cleaned;
+  const fracPart = hasDot ? cleaned.slice(dotIdx + 1).replace(/\./g, '') : '';
+  const formattedInt = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+  return hasDot ? `${formattedInt}.${fracPart}` : formattedInt;
+}
+
 export function formatShorthandInput(val: number | null): string {
   if (val === null || !Number.isFinite(val)) return '';
   if (val >= 1_000_000_000 && val % 100_000_000 === 0) return `${val / 1_000_000_000}b`;
   if (val >= 1_000_000 && val % 100_000 === 0) return `${val / 1_000_000}m`;
   if (val >= 1_000 && val % 100 === 0) return `${val / 1_000}k`;
-  return String(val);
+  return formatIskInput(val);
 }
 
 export function formatRelativeTime(iso: string | null | undefined): string {

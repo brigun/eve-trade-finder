@@ -1,7 +1,14 @@
 import { useEffect, useState } from 'react';
 import { Bookmark, Check, Flame, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.ts';
-import { formatIskCompact, formatIskExact, formatPct, parseIskShorthand } from '../lib/format.ts';
+import {
+  formatIskCompact,
+  formatIskExact,
+  formatIskInput,
+  formatLiveNumericInput,
+  formatPct,
+  parseIskShorthand,
+} from '../lib/format.ts';
 import type { WatchlistItem } from '../types/api.ts';
 import { ItemIcon } from './ItemIcon.tsx';
 
@@ -23,14 +30,14 @@ function WatchlistRow({
   onDelete: (typeId: number) => Promise<void>;
 }) {
   const [note, setNote] = useState(item.note);
-  const [targetBuy, setTargetBuy] = useState(item.targetBuy !== null ? String(item.targetBuy) : '');
-  const [targetSell, setTargetSell] = useState(item.targetSell !== null ? String(item.targetSell) : '');
+  const [targetBuy, setTargetBuy] = useState(formatIskInput(item.targetBuy));
+  const [targetSell, setTargetSell] = useState(formatIskInput(item.targetSell));
   const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     setNote(item.note);
-    setTargetBuy(item.targetBuy !== null ? String(item.targetBuy) : '');
-    setTargetSell(item.targetSell !== null ? String(item.targetSell) : '');
+    setTargetBuy(formatIskInput(item.targetBuy));
+    setTargetSell(formatIskInput(item.targetSell));
     setDirty(false);
   }, [item]);
 
@@ -83,26 +90,40 @@ function WatchlistRow({
       <td className="px-3 py-2.5">
         <input
           type="text"
+          inputMode="decimal"
           value={targetBuy}
           onChange={(e) => {
-            setTargetBuy(e.target.value);
+            setTargetBuy(formatLiveNumericInput(e.target.value, true));
             setDirty(true);
           }}
+          onBlur={() => {
+            const parsed = parseIskShorthand(targetBuy);
+            if (parsed !== null) {
+              setTargetBuy(formatIskInput(parsed));
+            }
+          }}
           placeholder="Target Buy"
-          className="w-24 px-2 py-1 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-[11px] text-[#EFEAE0]"
+          className="w-28 px-2 py-1 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-[11px] text-[#EFEAE0]"
         />
       </td>
 
       <td className="px-3 py-2.5">
         <input
           type="text"
+          inputMode="decimal"
           value={targetSell}
           onChange={(e) => {
-            setTargetSell(e.target.value);
+            setTargetSell(formatLiveNumericInput(e.target.value, true));
             setDirty(true);
           }}
+          onBlur={() => {
+            const parsed = parseIskShorthand(targetSell);
+            if (parsed !== null) {
+              setTargetSell(formatIskInput(parsed));
+            }
+          }}
           placeholder="Target Sell"
-          className="w-24 px-2 py-1 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-[11px] text-[#EFEAE0]"
+          className="w-28 px-2 py-1 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-[11px] text-[#EFEAE0]"
         />
       </td>
 

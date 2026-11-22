@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ChangeEvent } from 'react';
 import {
   AlertTriangle,
   BookOpen,
@@ -11,12 +11,16 @@ import {
 } from 'lucide-react';
 import { api } from '../lib/api.ts';
 import {
+  formatIntInput,
   formatIskCompact,
   formatIskExact,
+  formatIskInput,
+  formatLiveNumericInput,
   formatPct,
   formatRelativeTime,
   formatUnitsCompact,
   nextEveTick,
+  parseIskShorthand,
 } from '../lib/format.ts';
 import type { ItemDetailResponse } from '../types/api.ts';
 import { ItemGameInfoModal } from './ItemGameInfoModal.tsx';
@@ -45,15 +49,47 @@ export function ItemDrawer({
   const [calcBuy, setCalcBuy] = useState<number>(0);
   const [calcSell, setCalcSell] = useState<number>(0);
   const [calcQty, setCalcQty] = useState<number>(1);
+  const [calcBuyText, setCalcBuyText] = useState<string>('0');
+  const [calcSellText, setCalcSellText] = useState<string>('0');
+  const [calcQtyText, setCalcQtyText] = useState<string>('1');
+
+  const applyFormattedInput = (e: ChangeEvent<HTMLInputElement>, allowDecimal: boolean): string => {
+    const input = e.currentTarget;
+    const raw = input.value;
+    const cursor = input.selectionStart;
+    const nonCommaBeforeCursor =
+      cursor !== null ? raw.slice(0, cursor).replace(/,/g, '').length : null;
+    const formatted = formatLiveNumericInput(raw, allowDecimal);
+
+    if (nonCommaBeforeCursor !== null) {
+      window.requestAnimationFrame(() => {
+        if (document.activeElement !== input || input.selectionStart === null) return;
+        let targetPos = 0;
+        let seen = 0;
+        while (targetPos < formatted.length && seen < nonCommaBeforeCursor) {
+          if (formatted[targetPos] !== ',') seen++;
+          targetPos++;
+        }
+        input.setSelectionRange(targetPos, targetPos);
+      });
+    }
+
+    return formatted;
+  };
 
   const loadDetail = useCallback(async (id: number, autoFetchHistory: boolean) => {
     setLoading(true);
     try {
       const res = await api.getItemDetail(id);
       setDetail(res);
-      setCalcBuy(nextEveTick(res.item.bestBid, 'up'));
-      setCalcSell(nextEveTick(res.item.bestAsk, 'down'));
+      const initialBuy = nextEveTick(res.item.bestBid, 'up');
+      const initialSell = nextEveTick(res.item.bestAsk, 'down');
+      setCalcBuy(initialBuy);
+      setCalcSell(initialSell);
       setCalcQty(1);
+      setCalcBuyText(formatIskInput(initialBuy));
+      setCalcSellText(formatIskInput(initialSell));
+      setCalcQtyText(formatIntInput(1));
 
       if (autoFetchHistory && !res.historyMeta) {
         setHistoryLoading(true);
@@ -324,15 +360,35 @@ export function ItemDrawer({
                     </span>
                     <div className="flex gap-1">
                       <input
-                        type="number"
-                        step="any"
-                        value={calcBuy}
-                        onChange={(e) => setCalcBuy(Number(e.target.value))}
+                        type="text"
+                        inputMode="decimal"
+                        value={calcBuyText}
+                        onChange={(e) => {
+                          const formatted = applyFormattedInput(e, true);
+                          setCalcBuyText(formatted);
+                          const parsed = parseIskShorthand(formatted);
+                          if (parsed !== null && parsed >= 0) {
+                            setCalcBuy(parsed);
+                          }
+                        }}
+                        onBlur={() => {
+                          const parsed = parseIskShorthand(calcBuyText);
+                          const nextVal = parsed !== null && parsed >= 0 ? parsed : calcBuy;
+                          setCalcBuy(nextVal);
+                          setCalcBuyText(formatIskInput(nextVal));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
+                        }}
                         className="w-full px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
                       />
                       <button
                         type="button"
-                        onClick={() => setCalcBuy(nextEveTick(calcBuy, 'up'))}
+                        onClick={() => {
+                          const next = nextEveTick(calcBuy, 'up');
+                          setCalcBuy(next);
+                          setCalcBuyText(formatIskInput(next));
+                        }}
                         className="px-2 rounded bg-[#08090D] border border-[#262938] hover:border-[#9B7BFF] text-[10px] font-mono-num text-[#9B7BFF] cursor-pointer"
                         title="Step up 1 EVE tick"
                       >
@@ -347,15 +403,35 @@ export function ItemDrawer({
                     </span>
                     <div className="flex gap-1">
                       <input
-                        type="number"
-                        step="any"
-                        value={calcSell}
-                        onChange={(e) => setCalcSell(Number(e.target.value))}
+                        type="text"
+                        inputMode="decimal"
+                        value={calcSellText}
+                        onChange={(e) => {
+                          const formatted = applyFormattedInput(e, true);
+                          setCalcSellText(formatted);
+                          const parsed = parseIskShorthand(formatted);
+                          if (parsed !== null && parsed >= 0) {
+                            setCalcSell(parsed);
+                          }
+                        }}
+                        onBlur={() => {
+                          const parsed = parseIskShorthand(calcSellText);
+                          const nextVal = parsed !== null && parsed >= 0 ? parsed : calcSell;
+                          setCalcSell(nextVal);
+                          setCalcSellText(formatIskInput(nextVal));
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') e.currentTarget.blur();
+                        }}
                         className="w-full px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
                       />
                       <button
                         type="button"
-                        onClick={() => setCalcSell(nextEveTick(calcSell, 'down'))}
+                        onClick={() => {
+                          const next = nextEveTick(calcSell, 'down');
+                          setCalcSell(next);
+                          setCalcSellText(formatIskInput(next));
+                        }}
                         className="px-2 rounded bg-[#08090D] border border-[#262938] hover:border-[#9B7BFF] text-[10px] font-mono-num text-[#9B7BFF] cursor-pointer"
                         title="Step down 1 EVE tick"
                       >
@@ -369,10 +445,27 @@ export function ItemDrawer({
                       Quantity (Units)
                     </span>
                     <input
-                      type="number"
-                      min={1}
-                      value={calcQty}
-                      onChange={(e) => setCalcQty(Math.max(1, Number(e.target.value)))}
+                      type="text"
+                      inputMode="numeric"
+                      value={calcQtyText}
+                      onChange={(e) => {
+                        const formatted = applyFormattedInput(e, false);
+                        setCalcQtyText(formatted);
+                        const parsed = parseIskShorthand(formatted);
+                        if (parsed !== null && parsed >= 1) {
+                          setCalcQty(Math.max(1, Math.floor(parsed)));
+                        }
+                      }}
+                      onBlur={() => {
+                        const parsed = parseIskShorthand(calcQtyText);
+                        const nextQty =
+                          parsed !== null && parsed >= 1 ? Math.max(1, Math.floor(parsed)) : calcQty;
+                        setCalcQty(nextQty);
+                        setCalcQtyText(formatIntInput(nextQty));
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') e.currentTarget.blur();
+                      }}
                       className="w-full px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
                     />
                   </label>
