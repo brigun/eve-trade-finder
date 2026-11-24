@@ -32,5 +32,7 @@ describe('American comma input formatters', () => {
     assert.equal(parseIskShorthand('123,456,789'), 123_456_789);
     assert.equal(parseIskShorthand('123,456,789.25'), 123_456_789.25);
     assert.equal(parseIskShorthand('10m'), 10_000_000);
+    assert.equal(parseIskShorthand('.5m'), 500_000);
+    assert.equal(parseIskShorthand('.25b'), 250_000_000);
   });
 });

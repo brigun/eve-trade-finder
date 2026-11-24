@@ -1,5 +1,5 @@
-import { useEffect, useState } from 'react';
-import { Bookmark, Check, Flame, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { Bookmark, Check, Flame, Save, Trash2 } from 'lucide-react';
 import { api } from '../lib/api.ts';
 import {
   formatIskCompact,
@@ -18,28 +18,213 @@ interface WatchlistViewProps {
   onNotify: (msg: string) => void;
 }
 
+function parseTargetField(raw: string): { valid: boolean; value: number | null } {
+  const trimmed = raw.trim();
+  if (!trimmed) return { valid: true, value: null };
+  const parsed = parseIskShorthand(trimmed);
+  if (parsed === null || !Number.isFinite(parsed) || parsed < 0) {
+    return { valid: false, value: null };
+  }
+  return { valid: true, value: parsed };
+}
+
 function WatchlistRow({
   item,
   onSelect,
   onSave,
   onDelete,
+  onNotify,
 }: {
   item: WatchlistItem;
   onSelect: () => void;
-  onSave: (typeId: number, note: string, targetBuy: number | null, targetSell: number | null) => Promise<void>;
+  onSave: (
+    typeId: number,
+    note: string,
+    targetBuy: number | null,
+    targetSell: number | null,
+  ) => Promise<boolean>;
   onDelete: (typeId: number) => Promise<void>;
+  onNotify: (msg: string) => void;
 }) {
   const [note, setNote] = useState(item.note);
   const [targetBuy, setTargetBuy] = useState(formatIskInput(item.targetBuy));
   const [targetSell, setTargetSell] = useState(formatIskInput(item.targetSell));
-  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [justSaved, setJustSaved] = useState(false);
+  const savedTimerRef = useRef<number | null>(null);
+
+  const clearSavedFeedback = () => {
+    if (savedTimerRef.current !== null) {
+      window.clearTimeout(savedTimerRef.current);
+      savedTimerRef.current = null;
+    }
+    setJustSaved(false);
+  };
+
+  const buyInputRef = useRef<HTMLInputElement>(null);
+  const sellInputRef = useRef<HTMLInputElement>(null);
+  const noteInputRef = useRef<HTMLInputElement>(null);
+
+  const typeIdRef = useRef(item.typeId);
+  typeIdRef.current = item.typeId;
+
+  const draftRef = useRef({
+    note: item.note,
+    targetBuy: formatIskInput(item.targetBuy),
+    targetSell: formatIskInput(item.targetSell),
+  });
+  const lastSavedRef = useRef({
+    note: item.note,
+    targetBuy: item.targetBuy,
+    targetSell: item.targetSell,
+  });
+  const deletedRef = useRef(false);
 
   useEffect(() => {
+    lastSavedRef.current.targetBuy = item.targetBuy;
+    if (document.activeElement !== buyInputRef.current) {
+      const formatted = formatIskInput(item.targetBuy);
+      setTargetBuy(formatted);
+      draftRef.current.targetBuy = formatted;
+    }
+  }, [item.typeId, item.targetBuy]);
+
+  useEffect(() => {
+    lastSavedRef.current.targetSell = item.targetSell;
+    if (document.activeElement !== sellInputRef.current) {
+      const formatted = formatIskInput(item.targetSell);
+      setTargetSell(formatted);
+      draftRef.current.targetSell = formatted;
+    }
+  }, [item.typeId, item.targetSell]);
+
+  useEffect(() => {
+    lastSavedRef.current.note = item.note;
+    if (document.activeElement !== noteInputRef.current) {
+      setNote(item.note);
+      draftRef.current.note = item.note;
+    }
+  }, [item.typeId, item.note]);
+
+  // Flush any pending valid edits when navigating away or unmounting
+  useEffect(() => {
+    return () => {
+      if (savedTimerRef.current !== null) {
+        window.clearTimeout(savedTimerRef.current);
+      }
+      if (deletedRef.current) return;
+      const parsedBuy = parseTargetField(draftRef.current.targetBuy);
+      const parsedSell = parseTargetField(draftRef.current.targetSell);
+      if (!parsedBuy.valid || !parsedSell.valid) return;
+      const nextNote = draftRef.current.note;
+      const last = lastSavedRef.current;
+      if (
+        nextNote === last.note &&
+        parsedBuy.value === last.targetBuy &&
+        parsedSell.value === last.targetSell
+      ) {
+        return;
+      }
+      void api
+        .updateWatchlist(typeIdRef.current, {
+          note: nextNote,
+          targetBuy: parsedBuy.value,
+          targetSell: parsedSell.value,
+        })
+        .catch(() => {});
+    };
+  }, []);
+
+  const parsedBuyLive = parseTargetField(targetBuy);
+  const parsedSellLive = parseTargetField(targetSell);
+  const isDirty =
+    !parsedBuyLive.valid ||
+    !parsedSellLive.valid ||
+    parsedBuyLive.value !== item.targetBuy ||
+    parsedSellLive.value !== item.targetSell ||
+    note !== item.note;
+
+  const commitSave = async () => {
+    if (deletedRef.current) return;
+
+    const draft = draftRef.current;
+    const parsedBuy = parseTargetField(draft.targetBuy);
+    const parsedSell = parseTargetField(draft.targetSell);
+
+    if (!parsedBuy.valid || !parsedSell.valid) {
+      onNotify('Invalid target price — use numbers or shorthand like 10m / 500k');
+      if (!parsedBuy.valid) {
+        const reverted = formatIskInput(item.targetBuy);
+        draftRef.current.targetBuy = reverted;
+        setTargetBuy(reverted);
+      }
+      if (!parsedSell.valid) {
+        const reverted = formatIskInput(item.targetSell);
+        draftRef.current.targetSell = reverted;
+        setTargetSell(reverted);
+      }
+      return;
+    }
+
+    const formattedBuy = formatIskInput(parsedBuy.value);
+    const formattedSell = formatIskInput(parsedSell.value);
+    draftRef.current.targetBuy = formattedBuy;
+    draftRef.current.targetSell = formattedSell;
+    setTargetBuy(formattedBuy);
+    setTargetSell(formattedSell);
+
+    const last = lastSavedRef.current;
+    if (
+      draft.note === last.note &&
+      parsedBuy.value === last.targetBuy &&
+      parsedSell.value === last.targetSell
+    ) {
+      return;
+    }
+
+    lastSavedRef.current = {
+      note: draft.note,
+      targetBuy: parsedBuy.value,
+      targetSell: parsedSell.value,
+    };
+
+    setSaving(true);
+    try {
+      const ok = await onSave(item.typeId, draft.note, parsedBuy.value, parsedSell.value);
+      if (ok) {
+        if (savedTimerRef.current !== null) {
+          window.clearTimeout(savedTimerRef.current);
+        }
+        setJustSaved(true);
+        savedTimerRef.current = window.setTimeout(() => {
+          savedTimerRef.current = null;
+          setJustSaved(false);
+        }, 2000);
+      } else {
+        lastSavedRef.current = {
+          note: item.note,
+          targetBuy: item.targetBuy,
+          targetSell: item.targetSell,
+        };
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const revertEdits = () => {
+    clearSavedFeedback();
+    const revertedBuy = formatIskInput(item.targetBuy);
+    const revertedSell = formatIskInput(item.targetSell);
+    draftRef.current = {
+      note: item.note,
+      targetBuy: revertedBuy,
+      targetSell: revertedSell,
+    };
     setNote(item.note);
-    setTargetBuy(formatIskInput(item.targetBuy));
-    setTargetSell(formatIskInput(item.targetSell));
-    setDirty(false);
-  }, [item]);
+    setTargetBuy(revertedBuy);
+    setTargetSell(revertedSell);
+  };
 
   const buyHit =
     item.targetBuy !== null && item.bestBid !== null && item.bestBid <= item.targetBuy;
@@ -89,17 +274,24 @@ function WatchlistRow({
 
       <td className="px-3 py-2.5">
         <input
+          ref={buyInputRef}
           type="text"
           inputMode="decimal"
           value={targetBuy}
           onChange={(e) => {
-            setTargetBuy(formatLiveNumericInput(e.target.value, true));
-            setDirty(true);
+            clearSavedFeedback();
+            const next = formatLiveNumericInput(e.target.value, true);
+            draftRef.current.targetBuy = next;
+            setTargetBuy(next);
           }}
-          onBlur={() => {
-            const parsed = parseIskShorthand(targetBuy);
-            if (parsed !== null) {
-              setTargetBuy(formatIskInput(parsed));
+          onBlur={() => void commitSave()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              revertEdits();
+              e.currentTarget.blur();
             }
           }}
           placeholder="Target Buy"
@@ -109,17 +301,24 @@ function WatchlistRow({
 
       <td className="px-3 py-2.5">
         <input
+          ref={sellInputRef}
           type="text"
           inputMode="decimal"
           value={targetSell}
           onChange={(e) => {
-            setTargetSell(formatLiveNumericInput(e.target.value, true));
-            setDirty(true);
+            clearSavedFeedback();
+            const next = formatLiveNumericInput(e.target.value, true);
+            draftRef.current.targetSell = next;
+            setTargetSell(next);
           }}
-          onBlur={() => {
-            const parsed = parseIskShorthand(targetSell);
-            if (parsed !== null) {
-              setTargetSell(formatIskInput(parsed));
+          onBlur={() => void commitSave()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              revertEdits();
+              e.currentTarget.blur();
             }
           }}
           placeholder="Target Sell"
@@ -129,11 +328,24 @@ function WatchlistRow({
 
       <td className="px-3 py-2.5">
         <input
+          ref={noteInputRef}
           type="text"
           value={note}
           onChange={(e) => {
-            setNote(e.target.value);
-            setDirty(true);
+            clearSavedFeedback();
+            const next = e.target.value;
+            draftRef.current.note = next;
+            setNote(next);
+          }}
+          onBlur={() => void commitSave()}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') {
+              e.preventDefault();
+              e.currentTarget.blur();
+            } else if (e.key === 'Escape') {
+              revertEdits();
+              e.currentTarget.blur();
+            }
           }}
           placeholder="Add trader note..."
           className="w-44 px-2 py-1 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs text-[#EFEAE0]"
@@ -142,26 +354,52 @@ function WatchlistRow({
 
       <td className="px-3 py-2.5 text-right whitespace-nowrap">
         <div className="inline-flex items-center gap-1.5">
-          {dirty && (
+          {justSaved && !isDirty && !saving ? (
             <button
               type="button"
-              onClick={() =>
-                void onSave(
-                  item.typeId,
-                  note,
-                  parseIskShorthand(targetBuy),
-                  parseIskShorthand(targetSell),
-                )
-              }
-              title="Save changes"
-              className="p-1.5 rounded bg-[#46E595]/20 text-[#46E595] border border-[#46E595]/40 hover:bg-[#46E595]/30 cursor-pointer"
+              disabled
+              title="Saved"
+              aria-label="Saved"
+              className="p-1.5 rounded bg-[#46E595]/20 text-[#46E595] border border-[#46E595]/40 cursor-default"
             >
               <Check className="w-3.5 h-3.5" />
+            </button>
+          ) : isDirty || saving ? (
+            <button
+              type="button"
+              disabled={saving}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => void commitSave()}
+              title={saving ? 'Saving...' : 'Save changes'}
+              aria-label="Save changes"
+              className={`p-1.5 rounded bg-[#9B7BFF]/20 text-[#B298FF] border border-[#9B7BFF]/50 hover:bg-[#9B7BFF]/30 cursor-pointer ${
+                saving ? 'animate-pulse opacity-60' : ''
+              }`}
+            >
+              <Save className="w-3.5 h-3.5" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              disabled
+              title="No unsaved changes"
+              aria-label="No unsaved changes"
+              className="p-1.5 rounded bg-[#161923] border border-[#262938] text-[#656A7C]/60 cursor-default"
+            >
+              <Save className="w-3.5 h-3.5" />
             </button>
           )}
           <button
             type="button"
-            onClick={() => void onDelete(item.typeId)}
+            onMouseDown={(e) => {
+              deletedRef.current = true;
+              e.preventDefault();
+            }}
+            onClick={() => {
+              void onDelete(item.typeId).catch(() => {
+                deletedRef.current = false;
+              });
+            }}
             title="Remove from Watchlist"
             className="p-1.5 rounded bg-[#161923] border border-[#262938] text-[#9CA0B0] hover:text-[#FF4D6D] hover:border-[#FF4D6D]/50 cursor-pointer"
           >
@@ -186,6 +424,8 @@ export function WatchlistView({
     try {
       const res = await api.getWatchlist();
       setItems(res.items);
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Failed to load Watchlist');
     } finally {
       setLoading(false);
     }
@@ -200,18 +440,40 @@ export function WatchlistView({
     note: string,
     targetBuy: number | null,
     targetSell: number | null,
-  ) => {
-    await api.updateWatchlist(typeId, { note, targetBuy, targetSell });
-    onNotify('Saved watchlist targets & notes');
-    onWatchlistChanged();
-    await load();
+  ): Promise<boolean> => {
+    try {
+      const updated = await api.updateWatchlist(typeId, { note, targetBuy, targetSell });
+      setItems((prev) =>
+        prev.map((row) =>
+          row.typeId === typeId
+            ? {
+                ...row,
+                note: updated.note,
+                targetBuy: updated.targetBuy,
+                targetSell: updated.targetSell,
+              }
+            : row,
+        ),
+      );
+      onNotify('Saved watchlist targets & notes');
+      onWatchlistChanged();
+      return true;
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Failed to save watchlist changes');
+      return false;
+    }
   };
 
   const handleDelete = async (typeId: number) => {
-    await api.removeWatchlist(typeId);
-    onNotify('Removed item from Watchlist');
-    onWatchlistChanged();
-    await load();
+    try {
+      await api.removeWatchlist(typeId);
+      setItems((prev) => prev.filter((row) => row.typeId !== typeId));
+      onNotify('Removed item from Watchlist');
+      onWatchlistChanged();
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Failed to remove item from Watchlist');
+      throw err;
+    }
   };
 
   if (loading) {
@@ -245,7 +507,7 @@ export function WatchlistView({
             Persisted Trade Watchlist
           </h2>
           <p className="text-[11px] text-[#9CA0B0]">
-            Track spread alerts, target entry/exit prices (supports 10m/500k shorthand), and notes
+            Track spread alerts, target entry/exit prices (supports 10m/500k shorthand, auto-saves on Enter or blur), and notes
           </p>
         </div>
         <span className="font-mono-num text-xs text-[#E07A63]">{items.length} tracked</span>
@@ -274,6 +536,7 @@ export function WatchlistView({
                 onSelect={() => onSelectTypeId(item.typeId)}
                 onSave={handleSave}
                 onDelete={handleDelete}
+                onNotify={onNotify}
               />
             ))}
           </tbody>
