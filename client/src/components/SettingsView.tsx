@@ -71,6 +71,20 @@ export function SettingsView({
     }
   };
 
+  const resetSsoToDefault = async () => {
+    setSaving(true);
+    try {
+      const res = await api.updateSettings({ esiClientId: '', ssoRedirectUri: '' });
+      setForm(res.settings);
+      await onSettingsUpdated();
+      onNotify('Reset EVE SSO to built-in Client ID');
+    } catch (err) {
+      onNotify(err instanceof Error ? err.message : 'Failed to reset EVE SSO settings');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
     <div className="space-y-5">
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
@@ -278,30 +292,44 @@ export function SettingsView({
           </div>
 
           <div className="bg-[#0F1118] border border-[#262938] rounded-md p-5 space-y-3">
-            <div className="flex items-center gap-2">
-              <ShieldCheck className="w-4 h-4 text-[#9B7BFF]" />
-              <h2 className="font-display text-sm font-semibold text-[#EFEAE0]">
-                Optional EVE SSO Client Configuration
-              </h2>
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex items-center gap-2">
+                <ShieldCheck className="w-4 h-4 text-[#9B7BFF]" />
+                <h2 className="font-display text-sm font-semibold text-[#EFEAE0]">
+                  EVE Online SSO Configuration
+                </h2>
+              </div>
+              {form.esiClientId.trim() && (
+                <span className="px-2 py-0.5 rounded font-mono-num text-[10px] bg-[#46E595]/15 text-[#46E595] border border-[#46E595]/35">
+                  SSO READY
+                </span>
+              )}
             </div>
+
+            <p className="text-xs text-[#9CA0B0] leading-relaxed">
+              JITA IV // MONOLITH ships pre-configured with its built-in public EVE SSO Client ID
+              (OAuth2 + PKCE — no client secret needed), so you can sign in directly from{' '}
+              <span className="text-[#EFEAE0]">My Orders</span>. The fields below are optional
+              advanced overrides for self-hosters using their own EVE Developers application.
+            </p>
 
             <div className="grid grid-cols-1 gap-3">
               <label className="flex flex-col gap-1">
                 <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
-                  EVE Application Client ID
+                  EVE Application Client ID (Advanced Override)
                 </span>
                 <input
                   type="text"
                   value={form.esiClientId}
                   onChange={(e) => setForm({ ...form, esiClientId: e.target.value })}
-                  placeholder="Optional — paste Client ID from developers.eveonline.com"
+                  placeholder="Pre-configured built-in Client ID (override optional)"
                   className="px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none font-mono-num text-xs text-[#EFEAE0]"
                 />
               </label>
 
               <label className="flex flex-col gap-1">
                 <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
-                  OAuth Redirect URI
+                  OAuth Redirect URI (Advanced Override)
                 </span>
                 <input
                   type="text"
@@ -312,15 +340,25 @@ export function SettingsView({
               </label>
             </div>
 
-            <button
-              type="button"
-              disabled={saving}
-              onClick={() => void saveAll(false)}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#9B7BFF]/45 hover:bg-[#9B7BFF]/20 text-xs text-[#EFEAE0] cursor-pointer"
-            >
-              <Save className="w-3.5 h-3.5 text-[#9B7BFF]" />
-              <span>Save SSO Settings</span>
-            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void saveAll(false)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#9B7BFF]/45 hover:bg-[#9B7BFF]/20 text-xs text-[#EFEAE0] cursor-pointer"
+              >
+                <Save className="w-3.5 h-3.5 text-[#9B7BFF]" />
+                <span>Save SSO Settings</span>
+              </button>
+              <button
+                type="button"
+                disabled={saving}
+                onClick={() => void resetSsoToDefault()}
+                className="px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#9B7BFF] text-xs text-[#9CA0B0] hover:text-[#EFEAE0] cursor-pointer"
+              >
+                Reset to Built-In
+              </button>
+            </div>
           </div>
         </section>
       </div>

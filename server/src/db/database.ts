@@ -1,6 +1,11 @@
 import fs from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
-import { DATA_DIR, DB_PATH } from '../config.js';
+import {
+  DATA_DIR,
+  DB_PATH,
+  DEFAULT_EVE_SSO_CLIENT_ID,
+  DEFAULT_EVE_SSO_REDIRECT_URI,
+} from '../config.js';
 
 let dbInstance: DatabaseSync | null = null;
 
@@ -19,8 +24,8 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   auto_sync_enabled: 'true',
   auto_sync_interval_min: '15',
   capture_share_pct: '15',
-  esi_client_id: '',
-  sso_redirect_uri: 'http://localhost:3001/api/auth/callback',
+  esi_client_id: DEFAULT_EVE_SSO_CLIENT_ID,
+  sso_redirect_uri: DEFAULT_EVE_SSO_REDIRECT_URI,
   llm_provider: 'gemini',
   llm_model: 'gemini-3.8-flash',
   llm_base_url: 'http://localhost:11434/v1',
@@ -411,6 +416,13 @@ function seedDefaults(db: DatabaseSync): void {
     for (const [key, value] of Object.entries(DEFAULT_SETTINGS)) {
       insertSetting.run(key, value);
     }
+
+    db.prepare(
+      "UPDATE settings SET value = ? WHERE key = 'esi_client_id' AND TRIM(value) = ''",
+    ).run(DEFAULT_EVE_SSO_CLIENT_ID);
+    db.prepare(
+      "UPDATE settings SET value = ? WHERE key = 'sso_redirect_uri' AND TRIM(value) = ''",
+    ).run(DEFAULT_EVE_SSO_REDIRECT_URI);
 
     const currProviderRow = db
       .prepare("SELECT value FROM settings WHERE key = 'llm_provider'")

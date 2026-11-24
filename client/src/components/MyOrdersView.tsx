@@ -91,6 +91,8 @@ export function MyOrdersView({
   };
 
   if (!ssoStatus?.connected) {
+    const showManualSetup = ssoStatus !== null && !ssoStatus.clientIdConfigured;
+
     return (
       <div className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md p-6 sm:p-8 max-w-2xl mx-auto space-y-5">
         <div className="flex items-start gap-3.5">
@@ -112,40 +114,77 @@ export function MyOrdersView({
           </div>
         </div>
 
-        <div className="bg-[#161923] border border-[#262938] rounded p-4 space-y-2 text-xs text-[#9CA0B0]">
-          <div className="font-mono-num text-[11px] uppercase tracking-wider text-[#EFEAE0]">
-            Setup Steps (No Client Secret Needed)
+        {showManualSetup ? (
+          <div className="bg-[#161923] border border-[#262938] rounded p-4 space-y-2 text-xs text-[#9CA0B0]">
+            <div className="font-mono-num text-[11px] uppercase tracking-wider text-[#EFEAE0]">
+              Setup Steps (No Client Secret Needed)
+            </div>
+            <ol className="list-decimal list-inside space-y-1">
+              <li>
+                Register an application at{' '}
+                <a
+                  href="https://developers.eveonline.com"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#B298FF] hover:underline inline-flex items-center gap-0.5"
+                >
+                  developers.eveonline.com <ExternalLink className="w-3 h-3" />
+                </a>
+              </li>
+              <li>
+                Set Callback URL to:{' '}
+                <code className="px-1.5 py-0.5 rounded bg-[#08090D] font-mono-num text-[#EFEAE0]">
+                  {ssoStatus.redirectUri ?? 'http://localhost:3001/api/auth/callback'}
+                </code>
+              </li>
+              <li>
+                Add scopes:{' '}
+                <code className="font-mono-num text-[#EFEAE0]">
+                  esi-skills.read_skills.v1 esi-characters.read_standings.v1
+                  esi-markets.read_character_orders.v1
+                </code>
+              </li>
+            </ol>
           </div>
-          <ol className="list-decimal list-inside space-y-1">
-            <li>
-              Register an application at{' '}
-              <a
-                href="https://developers.eveonline.com"
-                target="_blank"
-                rel="noreferrer"
-                className="text-[#B298FF] hover:underline inline-flex items-center gap-0.5"
-              >
-                developers.eveonline.com <ExternalLink className="w-3 h-3" />
-              </a>
-            </li>
-            <li>
-              Set Callback URL to:{' '}
-              <code className="px-1.5 py-0.5 rounded bg-[#08090D] font-mono-num text-[#EFEAE0]">
-                {ssoStatus?.redirectUri ?? 'http://localhost:3001/api/auth/callback'}
-              </code>
-            </li>
-            <li>
-              Add scopes:{' '}
-              <code className="font-mono-num text-[#EFEAE0]">
-                esi-skills.read_skills.v1 esi-characters.read_standings.v1
-                esi-markets.read_character_orders.v1
-              </code>
-            </li>
-          </ol>
-        </div>
+        ) : (
+          <div className="bg-[#161923] border border-[#262938] rounded p-4 space-y-2.5 text-xs text-[#9CA0B0]">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className="font-mono-num text-[11px] uppercase tracking-wider text-[#EFEAE0]">
+                Read-Only EVE Permissions
+              </span>
+              <span className="px-2 py-0.5 rounded text-[10px] font-mono-num bg-[#46E595]/15 text-[#46E595] border border-[#46E595]/35">
+                SSO PRE-CONFIGURED
+              </span>
+            </div>
+            <p>
+              EVE Online SSO is pre-configured with OAuth2 + PKCE—no client secret or EVE
+              Developers registration is required. Only these read-only scopes are requested:
+            </p>
+            <ul className="space-y-1.5">
+              <li>
+                <code className="px-1.5 py-0.5 rounded bg-[#08090D] font-mono-num text-[#B298FF]">
+                  esi-skills.read_skills.v1
+                </code>{' '}
+                — Accounting & Broker Relations fee calculation
+              </li>
+              <li>
+                <code className="px-1.5 py-0.5 rounded bg-[#08090D] font-mono-num text-[#B298FF]">
+                  esi-characters.read_standings.v1
+                </code>{' '}
+                — Caldari Navy & State standings
+              </li>
+              <li>
+                <code className="px-1.5 py-0.5 rounded bg-[#08090D] font-mono-num text-[#B298FF]">
+                  esi-markets.read_character_orders.v1
+                </code>{' '}
+                — Active Jita 4-4 buy/sell order tracking
+              </li>
+            </ul>
+          </div>
+        )}
 
         <div className="flex flex-col sm:flex-row gap-2.5">
-          {!ssoStatus?.clientIdConfigured && (
+          {showManualSetup && (
             <input
               type="text"
               value={clientIdInput}
@@ -163,6 +202,13 @@ export function MyOrdersView({
             <span>Connect via EVE Online SSO</span>
           </button>
         </div>
+
+        {!showManualSetup && (
+          <p className="text-[11px] text-[#9CA0B0]">
+            Using built-in JITA IV // MONOLITH SSO client. Advanced users can override the Client
+            ID in <span className="text-[#EFEAE0]">Settings</span> if desired.
+          </p>
+        )}
 
         <p className="text-[11px] text-[#656A7C] leading-relaxed">
           Authentication uses official EVE Online SSO (OAuth2 + PKCE) on{' '}

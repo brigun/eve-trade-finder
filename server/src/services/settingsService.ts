@@ -1,3 +1,7 @@
+import {
+  DEFAULT_EVE_SSO_CLIENT_ID,
+  DEFAULT_EVE_SSO_REDIRECT_URI,
+} from '../config.js';
 import { getDb, withTransaction } from '../db/database.js';
 import type { FeeConfig } from './tradeAnalytics.js';
 
@@ -102,8 +106,8 @@ export function getAllSettings(): AppSettings {
     autoSyncEnabled: (map.get('auto_sync_enabled') ?? 'true') === 'true',
     autoSyncIntervalMin: Math.max(5, Math.round(toNum(map.get('auto_sync_interval_min'), 15))),
     captureSharePct: Math.min(100, Math.max(1, toNum(map.get('capture_share_pct'), 15))),
-    esiClientId: map.get('esi_client_id') ?? '',
-    ssoRedirectUri: map.get('sso_redirect_uri') ?? 'http://localhost:3001/api/auth/callback',
+    esiClientId: (map.get('esi_client_id') ?? '').trim() || DEFAULT_EVE_SSO_CLIENT_ID,
+    ssoRedirectUri: (map.get('sso_redirect_uri') ?? '').trim() || DEFAULT_EVE_SSO_REDIRECT_URI,
     llmProvider: llm.provider,
     llmModel: llm.model,
     llmBaseUrl: llm.baseUrl,

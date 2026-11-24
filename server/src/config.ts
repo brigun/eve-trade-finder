@@ -29,6 +29,10 @@ export const CCP_SDE_BASE = 'https://sde.evetech.net/tranquility/latest';
 export const EVE_SSO_AUTH_URL = 'https://login.eveonline.com/v2/oauth/authorize';
 export const EVE_SSO_TOKEN_URL = 'https://login.eveonline.com/v2/oauth/token';
 export const EVE_SSO_JWKS_URL = 'https://login.eveonline.com/oauth/jwks';
+export const DEFAULT_EVE_SSO_CLIENT_ID =
+  process.env.EVE_SSO_CLIENT_ID?.trim() || '0b1029fe56a541b9afca04a071fbff95';
+export const DEFAULT_EVE_SSO_REDIRECT_URI =
+  process.env.EVE_SSO_REDIRECT_URI?.trim() || 'http://localhost:3001/api/auth/callback';
 
 export const EVE_SSO_SCOPES = [
   'esi-skills.read_skills.v1',
