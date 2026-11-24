@@ -20,7 +20,7 @@ Download the installer for your operating system from the [Latest GitHub Release
 
 1. Launch **JITA IV Monolith** from your Desktop or Start Menu / Applications.
 2. Click **Initialize SDE & Sync Jita 4-4** (or **Sync Jita** in the top bar) to download CCP's official item catalog and live Jita 4-4 market orders (~19,000+ items).
-3. Open **Settings** to enter your character's **Broker Fee %** and **Sales Tax %** (or connect optional EVE Online SSO to auto-import skills and standings).
+3. Open **Settings** to enter your character's **Broker Fee %** and **Sales Tax %** (or open **My Orders** and click **Connect via EVE Online SSO** in 1 click to auto-import skills and standings without creating an EVE Developers account).
 
 ### Data Storage & Updating
 
@@ -57,13 +57,21 @@ Installing a newer version preserves your database and saved settings automatica
 
 ### Optional EVE SSO Setup
 
-1. Create an application at <https://developers.eveonline.com>.
-2. Set the Callback URL to `http://localhost:3001/api/auth/callback` (works both in the desktop app and local dev server).
-3. Add the following scopes:
+1. Open the **My Orders** tab in the app and click **Connect via EVE Online SSO**.
+2. Sign in on official `login.eveonline.com` (OAuth2 + PKCE `S256` with the app's built-in public Client ID — no client secret or EVE Developers account registration is needed).
+3. Approve the read-only scopes:
    - `esi-skills.read_skills.v1`
    - `esi-characters.read_standings.v1`
    - `esi-markets.read_character_orders.v1`
-4. Paste your **Client ID** in **Settings** (or in the **My Orders** tab) and click **Connect via EVE Online SSO**. No client secret is needed because PKCE (`S256`) is used.
+
+Your character's OAuth tokens, skills, standings, and active Jita orders are stored **only** in your local SQLite database (`jita-terminal.db`).
+
+#### Using Your Own EVE Developers App (Optional)
+
+If you are self-hosting or prefer your own EVE Developers application:
+
+1. Create an application at <https://developers.eveonline.com> with Callback URL `http://localhost:3001/api/auth/callback` and the three read-only scopes above.
+2. Enter your **Client ID** under **Settings → EVE Online SSO Configuration** and click **Save SSO Settings** (use **Reset to Built-In** anytime to restore the default).
 
 ### Optional Ask Neon (AI Advisor) Setup
 

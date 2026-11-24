@@ -47,9 +47,7 @@ settingsRouter.put('/', (req, res) => {
     patch.captureSharePct = Math.max(1, Math.min(100, body.captureSharePct));
   }
   if (typeof body.esiClientId === 'string') patch.esiClientId = body.esiClientId.trim();
-  if (typeof body.ssoRedirectUri === 'string' && body.ssoRedirectUri.trim()) {
-    patch.ssoRedirectUri = body.ssoRedirectUri.trim();
-  }
+  if (typeof body.ssoRedirectUri === 'string') patch.ssoRedirectUri = body.ssoRedirectUri.trim();
   if (body.llmProvider === 'gemini' || body.llmProvider === 'openai_compat') {
     patch.llmProvider = body.llmProvider;
   }

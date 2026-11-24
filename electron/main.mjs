@@ -79,7 +79,7 @@ async function createWindow() {
     mainWindow = null;
   });
 
-  await mainWindow.loadURL(`http://127.0.0.1:${serverHandle.port}`);
+  await mainWindow.loadURL(`http://localhost:${serverHandle.port}`);
 }
 
 app.setName('JITA IV Monolith');
@@ -124,7 +124,7 @@ app.whenReady().then(async () => {
       mainWindow.on('closed', () => {
         mainWindow = null;
       });
-      void mainWindow.loadURL(`http://127.0.0.1:${serverHandle.port}`);
+      void mainWindow.loadURL(`http://localhost:${serverHandle.port}`);
     }
   });
 });

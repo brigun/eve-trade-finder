@@ -62,25 +62,29 @@ export interface StartedServer {
 export async function startServer(preferredPort = PORT): Promise<StartedServer> {
   const app = createApp();
 
-  const listenOnPort = (targetPort: number): Promise<{ server: http.Server; port: number }> =>
+  const listenOnHost = (
+    targetPort: number,
+    host: string,
+  ): Promise<{ server: http.Server; port: number }> =>
     new Promise((resolve, reject) => {
-      const server = app.listen(targetPort, '127.0.0.1', () => {
+      const server = http.createServer(app);
+      const onError = (err: Error) => reject(err);
+      server.once('error', onError);
+      server.listen(targetPort, host, () => {
+        server.off('error', onError);
         const addr = server.address();
         const boundPort = typeof addr === 'object' && addr ? addr.port : targetPort;
         resolve({ server, port: boundPort });
-      });
-      server.once('error', (err) => {
-        reject(err);
       });
     });
 
   let bound: { server: http.Server; port: number };
   try {
-    bound = await listenOnPort(preferredPort);
+    bound = await listenOnHost(preferredPort, '127.0.0.1');
   } catch (err) {
     const code = (err as NodeJS.ErrnoException | undefined)?.code;
     if (code === 'EADDRINUSE' && preferredPort !== 0) {
-      bound = await listenOnPort(0);
+      bound = await listenOnHost(0, '127.0.0.1');
     } else {
       throw err;
     }
@@ -88,6 +92,17 @@ export async function startServer(preferredPort = PORT): Promise<StartedServer> 
 
   bound.server.requestTimeout = 200_000;
   bound.server.headersTimeout = 205_000;
+
+  let ipv6Server: http.Server | null = null;
+  try {
+    const v6Bound = await listenOnHost(bound.port, '::1');
+    ipv6Server = v6Bound.server;
+    ipv6Server.requestTimeout = 200_000;
+    ipv6Server.headersTimeout = 205_000;
+  } catch {
+    // IPv6 loopback may be unavailable or already bound; 127.0.0.1 remains active.
+  }
+
   startScheduler();
 
   return {
@@ -95,9 +110,16 @@ export async function startServer(preferredPort = PORT): Promise<StartedServer> 
     port: bound.port,
     close: async () => {
       stopScheduler();
-      await new Promise<void>((resolve) => {
-        bound.server.close(() => resolve());
-      });
+      await Promise.all([
+        new Promise<void>((resolve) => {
+          bound.server.close(() => resolve());
+        }),
+        ipv6Server
+          ? new Promise<void>((resolve) => {
+              ipv6Server.close(() => resolve());
+            })
+          : Promise.resolve(),
+      ]);
     },
   };
 }
