@@ -42,7 +42,7 @@ export function formatPct(val: number | null | undefined, showSign = false): str
 export function parseIskShorthand(raw: string): number | null {
   const cleaned = raw.trim().toLowerCase().replace(/[,_\s]|isk/g, '');
   if (!cleaned) return null;
-  const match = cleaned.match(/^([+-]?\d+(?:\.\d+)?)([kmb])?$/);
+  const match = cleaned.match(/^([+-]?(?:\d+(?:\.\d+)?|\.\d+))([kmb])?$/);
   if (!match) {
     const n = Number(cleaned);
     return Number.isFinite(n) ? n : null;

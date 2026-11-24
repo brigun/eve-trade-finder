@@ -115,6 +115,23 @@ watchlistRouter.get('/', (_req, res) => {
   res.json({ items });
 });
 
+function parseTargetPrice(
+  raw: unknown,
+  fallback: number | null,
+): { ok: true; value: number | null } | { ok: false } {
+  if (raw === undefined) {
+    return { ok: true, value: fallback };
+  }
+  if (raw === null || raw === '') {
+    return { ok: true, value: null };
+  }
+  const num = Number(raw);
+  if (!Number.isFinite(num) || num < 0) {
+    return { ok: false };
+  }
+  return { ok: true, value: num };
+}
+
 watchlistRouter.post('/', (req, res) => {
   const typeId = Number(req.body?.typeId);
   if (!Number.isFinite(typeId) || typeId <= 0) {
@@ -122,18 +139,30 @@ watchlistRouter.post('/', (req, res) => {
     return;
   }
 
-  const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 500) : '';
-  const targetBuy =
-    req.body?.targetBuy !== undefined && req.body?.targetBuy !== null && req.body?.targetBuy !== ''
-      ? Number(req.body.targetBuy)
-      : null;
-  const targetSell =
-    req.body?.targetSell !== undefined && req.body?.targetSell !== null && req.body?.targetSell !== ''
-      ? Number(req.body.targetSell)
-      : null;
-
   const db = getDb();
-  const now = new Date().toISOString();
+  const existing = db.prepare('SELECT * FROM watchlist WHERE type_id = ?').get(typeId) as
+    | {
+        type_id: number;
+        note: string;
+        target_buy: number | null;
+        target_sell: number | null;
+        created_at: string;
+      }
+    | undefined;
+
+  const hasNote = req.body?.note !== undefined;
+  const note = hasNote
+    ? typeof req.body.note === 'string'
+      ? req.body.note.slice(0, 500)
+      : ''
+    : (existing?.note ?? '');
+
+  const parsedBuy = parseTargetPrice(req.body?.targetBuy, existing?.target_buy ?? null);
+  const parsedSell = parseTargetPrice(req.body?.targetSell, existing?.target_sell ?? null);
+  const targetBuy = parsedBuy.ok ? parsedBuy.value : (existing?.target_buy ?? null);
+  const targetSell = parsedSell.ok ? parsedSell.value : (existing?.target_sell ?? null);
+
+  const createdAt = existing?.created_at ?? new Date().toISOString();
   db.prepare(`
     INSERT INTO watchlist (type_id, note, target_buy, target_sell, created_at)
     VALUES (?, ?, ?, ?, ?)
@@ -141,15 +170,9 @@ watchlistRouter.post('/', (req, res) => {
       note = excluded.note,
       target_buy = excluded.target_buy,
       target_sell = excluded.target_sell
-  `).run(
-    typeId,
-    note,
-    targetBuy !== null && Number.isFinite(targetBuy) ? targetBuy : null,
-    targetSell !== null && Number.isFinite(targetSell) ? targetSell : null,
-    now,
-  );
+  `).run(typeId, note, targetBuy, targetSell, createdAt);
 
-  res.status(201).json({ typeId, note, targetBuy, targetSell, createdAt: now });
+  res.status(201).json({ typeId, note, targetBuy, targetSell, createdAt });
 });
 
 watchlistRouter.patch('/:typeId', (req, res) => {
@@ -169,18 +192,15 @@ watchlistRouter.patch('/:typeId', (req, res) => {
   }
 
   const note = typeof req.body?.note === 'string' ? req.body.note.slice(0, 500) : existing.note;
-  const targetBuy =
-    req.body?.targetBuy === null || req.body?.targetBuy === ''
-      ? null
-      : req.body?.targetBuy !== undefined && Number.isFinite(Number(req.body.targetBuy))
-        ? Number(req.body.targetBuy)
-        : existing.target_buy;
-  const targetSell =
-    req.body?.targetSell === null || req.body?.targetSell === ''
-      ? null
-      : req.body?.targetSell !== undefined && Number.isFinite(Number(req.body.targetSell))
-        ? Number(req.body.targetSell)
-        : existing.target_sell;
+  const parsedBuy = parseTargetPrice(req.body?.targetBuy, existing.target_buy);
+  const parsedSell = parseTargetPrice(req.body?.targetSell, existing.target_sell);
+  if (!parsedBuy.ok || !parsedSell.ok) {
+    res.status(400).json({ error: 'Target prices must be non-negative numbers' });
+    return;
+  }
+
+  const targetBuy = parsedBuy.value;
+  const targetSell = parsedSell.value;
 
   db.prepare('UPDATE watchlist SET note = ?, target_buy = ?, target_sell = ? WHERE type_id = ?').run(
     note,

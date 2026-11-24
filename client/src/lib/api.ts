@@ -159,7 +159,7 @@ export const api = {
   updateWatchlist(
     typeId: number,
     payload: { note?: string; targetBuy?: number | null; targetSell?: number | null },
-  ): Promise<unknown> {
+  ): Promise<{ typeId: number; note: string; targetBuy: number | null; targetSell: number | null }> {
     return requestJson(`/api/watchlist/${typeId}`, {
       method: 'PATCH',
       body: JSON.stringify(payload),
