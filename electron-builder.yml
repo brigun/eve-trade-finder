@@ -1,0 +1,64 @@
+appId: com.nldf.jitamonolith
+productName: JITA IV Monolith
+copyright: "© 2026 brigun · EVE Online IP © 2026 Fenris Creations"
+
+directories:
+  output: release
+  buildResources: build
+
+asar: true
+
+files:
+  - electron/**/*
+  - server/dist/**/*
+  - server/package.json
+  - package.json
+  - "!data/**"
+  - "!**/*.db*"
+  - "!**/*.map"
+  - "!server/src/**"
+  - "!client/**"
+  - "!.github/**"
+  - "!release/**"
+  - "!build/**"
+
+extraResources:
+  - from: client/dist
+    to: client-dist
+  - from: build/icon.png
+    to: icon.png
+
+win:
+  icon: build/icon.png
+  target:
+    - target: nsis
+      arch:
+        - x64
+  artifactName: "Jita-Monolith-Setup-${version}-win-${arch}.${ext}"
+
+nsis:
+  oneClick: false
+  perMachine: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: JITA IV Monolith
+
+mac:
+  icon: build/icon.png
+  category: public.app-category.utilities
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  artifactName: "Jita-Monolith-${version}-mac-${arch}.${ext}"
+
+linux:
+  icon: build/icon.png
+  category: Utility
+  target:
+    - target: AppImage
+      arch:
+        - x64
+  artifactName: "Jita-Monolith-${version}-linux-${arch}.${ext}"

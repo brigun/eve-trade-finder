@@ -85,6 +85,36 @@ export interface RecommendedTradesResponse {
   fees: FeeConfig;
 }
 
+export type FilterKey =
+  | 'marketGroup'
+  | 'includeRootGroups'
+  | 'excludeRootGroups'
+  | 'watchlistOnly'
+  | 'requireHistory'
+  | 'trendingOnly'
+  | 'hideAnomalies'
+  | 'minRoiPct'
+  | 'maxRoiPct'
+  | 'minPrice'
+  | 'maxPrice'
+  | 'minNetProfit'
+  | 'minDailyIskVolume'
+  | 'minDailyUnits'
+  | 'maxCompetition'
+  | 'maxRecentUpdates1h'
+  | 'twoSidedBook';
+
+export interface FilterFailure {
+  key: FilterKey;
+  label: string;
+  reason: string;
+  excludedGroup?: string;
+}
+
+export interface LookupMarketItem extends MarketItem {
+  failedFilters: FilterFailure[];
+}
+
 export interface MarketItemsResponse {
   items: MarketItem[];
   total: number;
@@ -97,6 +127,10 @@ export interface MarketItemsResponse {
     avgRoiPct: number;
     trendingInMatchCount: number;
   };
+  filteredOutMatches: LookupMarketItem[];
+  filteredOutTotal: number;
+  excludedByQuickExcludesCount?: number;
+  excludedByQuickExcludeGroups?: string[];
 }
 
 export interface MarketStats {

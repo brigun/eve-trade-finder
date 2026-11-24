@@ -42,6 +42,29 @@ Then open `http://localhost:3001` (Express serves both the API and the built Rea
 npm test
 ```
 
+## Desktop Installers & Publishing Releases
+
+Packages a standalone desktop app (Electron + embedded Node SQLite + Express + built React UI) storing user data in the OS application data directory (`%APPDATA%\JITA IV Monolith\data` on Windows).
+
+### Local Desktop Build
+
+```bash
+# Run the desktop app locally from build output
+npm run desktop:dev
+
+# Build a standard Windows installer (.exe) into release/
+npm run desktop:build:win
+```
+
+### Automated Cross-Platform GitHub Releases (`.exe`, `.dmg`, `.AppImage`)
+
+Pushing any `v*` tag triggers [release.yml](.github/workflows/release.yml) to build installers on Windows, macOS, and Linux and attach them to a GitHub Release:
+
+```bash
+git tag v1.0.0
+git push origin v1.0.0
+```
+
 ## Optional EVE SSO Setup
 
 1. Create an application at <https://developers.eveonline.com>.

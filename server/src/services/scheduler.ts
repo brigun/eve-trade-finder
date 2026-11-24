@@ -90,6 +90,13 @@ export function startScheduler(): void {
   timer.unref?.();
 }
 
+export function stopScheduler(): void {
+  if (timer) {
+    clearInterval(timer);
+    timer = null;
+  }
+}
+
 export function refreshSchedulerSchedule(): void {
   const settings = getAllSettings();
   if (!settings.autoSyncEnabled) {

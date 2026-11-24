@@ -82,8 +82,8 @@ export function ItemDrawer({
     try {
       const res = await api.getItemDetail(id);
       setDetail(res);
-      const initialBuy = nextEveTick(res.item.bestBid, 'up');
-      const initialSell = nextEveTick(res.item.bestAsk, 'down');
+      const initialBuy = res.item.bestBid > 0 ? nextEveTick(res.item.bestBid, 'up') : 0;
+      const initialSell = res.item.bestAsk > 0 ? nextEveTick(res.item.bestAsk, 'down') : 0;
       setCalcBuy(initialBuy);
       setCalcSell(initialSell);
       setCalcQty(1);
@@ -288,34 +288,38 @@ export function ItemDrawer({
                   <Copy className="w-3.5 h-3.5 text-[#9B7BFF]" />
                   <span>Copy Name</span>
                 </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void copyValue(
-                      'Outbid Buy (4-sig-fig)',
-                      String(nextEveTick(detail.item.bestBid, 'up')),
-                    )
-                  }
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#46E595] text-xs font-mono-num text-[#EFEAE0] cursor-pointer"
-                >
-                  <Copy className="w-3.5 h-3.5 text-[#46E595]" />
-                  <span>Buy +1 Tick: {formatIskExact(nextEveTick(detail.item.bestBid, 'up'))}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() =>
-                    void copyValue(
-                      'Undercut Sell (4-sig-fig)',
-                      String(nextEveTick(detail.item.bestAsk, 'down')),
-                    )
-                  }
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#9B7BFF] text-xs font-mono-num text-[#EFEAE0] cursor-pointer"
-                >
-                  <Copy className="w-3.5 h-3.5 text-[#9B7BFF]" />
-                  <span>
-                    Sell -1 Tick: {formatIskExact(nextEveTick(detail.item.bestAsk, 'down'))}
-                  </span>
-                </button>
+                {detail.item.bestBid > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void copyValue(
+                        'Outbid Buy (4-sig-fig)',
+                        String(nextEveTick(detail.item.bestBid, 'up')),
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#46E595] text-xs font-mono-num text-[#EFEAE0] cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-[#46E595]" />
+                    <span>Buy +1 Tick: {formatIskExact(nextEveTick(detail.item.bestBid, 'up'))}</span>
+                  </button>
+                )}
+                {detail.item.bestAsk > 0 && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      void copyValue(
+                        'Undercut Sell (4-sig-fig)',
+                        String(nextEveTick(detail.item.bestAsk, 'down')),
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#9B7BFF] text-xs font-mono-num text-[#EFEAE0] cursor-pointer"
+                  >
+                    <Copy className="w-3.5 h-3.5 text-[#9B7BFF]" />
+                    <span>
+                      Sell -1 Tick: {formatIskExact(nextEveTick(detail.item.bestAsk, 'down'))}
+                    </span>
+                  </button>
+                )}
               </div>
 
               {/* Anomaly Warning Banner */}

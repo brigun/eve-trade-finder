@@ -5,9 +5,13 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const ROOT_DIR = path.resolve(__dirname, '../..');
-export const DATA_DIR = path.join(ROOT_DIR, 'data');
+export const DATA_DIR = process.env.JITA_DATA_DIR
+  ? path.resolve(process.env.JITA_DATA_DIR)
+  : path.join(ROOT_DIR, 'data');
 export const DB_PATH = path.join(DATA_DIR, 'jita-terminal.db');
-export const CLIENT_DIST_DIR = path.join(ROOT_DIR, 'client', 'dist');
+export const CLIENT_DIST_DIR = process.env.JITA_CLIENT_DIST_DIR
+  ? path.resolve(process.env.JITA_CLIENT_DIST_DIR)
+  : path.join(ROOT_DIR, 'client', 'dist');
 
 export const PORT = Number(process.env.PORT ?? 3001);
 export const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173';

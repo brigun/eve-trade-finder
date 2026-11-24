@@ -6,6 +6,8 @@ interface MarketGroupPickerProps {
   tree: MarketGroupTreeNode[];
   selectedGroupId: number | null;
   onSelect: (groupId: number | null) => void;
+  breaking?: boolean;
+  breakingReason?: string;
 }
 
 function findNodeAndAncestors(
@@ -50,7 +52,13 @@ function filterTree(
   return result;
 }
 
-export function MarketGroupPicker({ tree, selectedGroupId, onSelect }: MarketGroupPickerProps) {
+export function MarketGroupPicker({
+  tree,
+  selectedGroupId,
+  onSelect,
+  breaking = false,
+  breakingReason,
+}: MarketGroupPickerProps) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [expandedIds, setExpandedIds] = useState<Set<number>>(() => new Set());
@@ -198,15 +206,26 @@ export function MarketGroupPicker({ tree, selectedGroupId, onSelect }: MarketGro
 
   return (
     <div ref={containerRef} className="relative inline-flex items-center">
-      <div className="inline-flex items-center rounded bg-[#08090D] border border-[#262938] hover:border-[#9B7BFF]/60 transition-colors">
+      <div
+        title={breaking ? breakingReason : undefined}
+        className={`inline-flex items-center rounded border transition-colors ${
+          breaking
+            ? 'bg-[#FF4D6D]/12 border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60'
+            : 'bg-[#08090D] border-[#262938] hover:border-[#9B7BFF]/60'
+        }`}
+      >
         <button
           type="button"
           onClick={handleOpenToggle}
           aria-expanded={open}
           aria-label="Select EVE Market Segment"
-          className="inline-flex items-center gap-2 px-2.5 py-1 text-xs text-[#EFEAE0] cursor-pointer max-w-[320px] sm:max-w-[400px]"
+          className={`inline-flex items-center gap-2 px-2.5 py-1 text-xs cursor-pointer max-w-[320px] sm:max-w-[400px] ${
+            breaking ? 'text-[#FF4D6D]' : 'text-[#EFEAE0]'
+          }`}
         >
-          <FolderTree className="w-3.5 h-3.5 text-[#9B7BFF] shrink-0" />
+          <FolderTree
+            className={`w-3.5 h-3.5 shrink-0 ${breaking ? 'text-[#FF4D6D]' : 'text-[#9B7BFF]'}`}
+          />
           <span className="truncate" title={triggerLabel}>
             {triggerLabel}
           </span>

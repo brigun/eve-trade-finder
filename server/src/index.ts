@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import http from 'node:http';
 import path from 'node:path';
 import cors from 'cors';
 import express, { type NextFunction, type Request, type Response } from 'express';
@@ -11,7 +12,7 @@ import { presetsRouter } from './routes/presets.js';
 import { settingsRouter } from './routes/settings.js';
 import { syncRouter } from './routes/sync.js';
 import { watchlistRouter } from './routes/watchlist.js';
-import { startScheduler } from './services/scheduler.js';
+import { startScheduler, stopScheduler } from './services/scheduler.js';
 
 export function createApp() {
   initDatabase();
@@ -50,6 +51,55 @@ export function createApp() {
   });
 
   return app;
+}
+
+export interface StartedServer {
+  server: http.Server;
+  port: number;
+  close: () => Promise<void>;
+}
+
+export async function startServer(preferredPort = PORT): Promise<StartedServer> {
+  const app = createApp();
+
+  const listenOnPort = (targetPort: number): Promise<{ server: http.Server; port: number }> =>
+    new Promise((resolve, reject) => {
+      const server = app.listen(targetPort, '127.0.0.1', () => {
+        const addr = server.address();
+        const boundPort = typeof addr === 'object' && addr ? addr.port : targetPort;
+        resolve({ server, port: boundPort });
+      });
+      server.once('error', (err) => {
+        reject(err);
+      });
+    });
+
+  let bound: { server: http.Server; port: number };
+  try {
+    bound = await listenOnPort(preferredPort);
+  } catch (err) {
+    const code = (err as NodeJS.ErrnoException | undefined)?.code;
+    if (code === 'EADDRINUSE' && preferredPort !== 0) {
+      bound = await listenOnPort(0);
+    } else {
+      throw err;
+    }
+  }
+
+  bound.server.requestTimeout = 200_000;
+  bound.server.headersTimeout = 205_000;
+  startScheduler();
+
+  return {
+    server: bound.server,
+    port: bound.port,
+    close: async () => {
+      stopScheduler();
+      await new Promise<void>((resolve) => {
+        bound.server.close(() => resolve());
+      });
+    },
+  };
 }
 
 const isDirectEntry =

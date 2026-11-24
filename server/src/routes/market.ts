@@ -3,6 +3,13 @@ import { EXCLUDED_DEFAULT_GROUPS } from '../config.js';
 import { getDb } from '../db/database.js';
 import { EsiHttpError } from '../services/esiClient.js';
 import { getItemGameInfo } from '../services/gameInfoService.js';
+import {
+  evaluateItemFilters,
+  isQuickExcluded,
+  rankLookupMatches,
+  type FilterFailure,
+  type MarketFilterCriteria,
+} from '../services/marketFilter.js';
 import { getFeeConfig } from '../services/settingsService.js';
 import {
   computeItemMetrics,
@@ -367,7 +374,107 @@ export function loadScannerRows(): RawScannerRow[] {
     .all() as unknown as RawScannerRow[];
 }
 
+export interface LookupMarketItemDto extends MarketItemDto {
+  failedFilters: FilterFailure[];
+}
+
+function escapeLikePattern(q: string): string {
+  return `%${q.replace(/[\\%_]/g, '\\$&')}%`;
+}
+
+function loadOneSidedSearchRows(db: ReturnType<typeof getDb>, q: string): RawScannerRow[] {
+  const likePattern = escapeLikePattern(q);
+  const exactId = /^\d+$/.test(q) ? Number.parseInt(q, 10) : -1;
+  return db
+    .prepare(`
+      SELECT
+        ms.*,
+        it.name,
+        it.market_group_id,
+        it.root_group_id,
+        it.root_group_name,
+        it.volume,
+        hm.daily_volume_7d,
+        hm.daily_volume_30d,
+        hm.daily_isk_volume_7d,
+        hm.daily_isk_volume_30d,
+        hm.avg_price_7d,
+        hm.avg_price_30d,
+        hm.volume_trend_pct,
+        hm.price_trend_pct,
+        hm.active_days_30d,
+        hm.updated_at AS history_updated_at,
+        CASE WHEN w.type_id IS NOT NULL THEN 1 ELSE 0 END AS is_watchlisted,
+        COALESCE(co.cnt, 0) AS char_order_count
+      FROM market_summary ms
+      LEFT JOIN item_types it ON it.type_id = ms.type_id
+      LEFT JOIN history_metrics hm ON hm.type_id = ms.type_id
+      LEFT JOIN watchlist w ON w.type_id = ms.type_id
+      LEFT JOIN (
+        SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+      ) co ON co.type_id = ms.type_id
+      WHERE (ms.best_bid IS NULL OR ms.best_bid <= 0 OR ms.best_ask IS NULL OR ms.best_ask <= 0)
+        AND (LOWER(COALESCE(it.name, '')) LIKE ? ESCAPE '\\' OR ms.type_id = ?)
+      LIMIT 40
+    `)
+    .all(likePattern, exactId) as unknown as RawScannerRow[];
+}
+
+function loadSdeOnlySearchRows(db: ReturnType<typeof getDb>, q: string): RawScannerRow[] {
+  const likePattern = escapeLikePattern(q);
+  const exactId = /^\d+$/.test(q) ? Number.parseInt(q, 10) : -1;
+  return db
+    .prepare(`
+      SELECT
+        it.type_id,
+        NULL AS best_bid,
+        NULL AS best_ask,
+        NULL AS raw_best_bid,
+        1 AS bid_min_volume,
+        0 AS bid_volume,
+        0 AS ask_volume,
+        0 AS buy_order_count,
+        0 AS sell_order_count,
+        0 AS top_buy_competition,
+        0 AS top_sell_competition,
+        0 AS recent_updates_1h,
+        0 AS recent_updates_24h,
+        COALESCE(hm.updated_at, '') AS updated_at,
+        it.name,
+        it.market_group_id,
+        it.root_group_id,
+        it.root_group_name,
+        it.volume,
+        hm.daily_volume_7d,
+        hm.daily_volume_30d,
+        hm.daily_isk_volume_7d,
+        hm.daily_isk_volume_30d,
+        hm.avg_price_7d,
+        hm.avg_price_30d,
+        hm.volume_trend_pct,
+        hm.price_trend_pct,
+        hm.active_days_30d,
+        hm.updated_at AS history_updated_at,
+        CASE WHEN w.type_id IS NOT NULL THEN 1 ELSE 0 END AS is_watchlisted,
+        COALESCE(co.cnt, 0) AS char_order_count
+      FROM item_types it
+      LEFT JOIN market_summary ms ON ms.type_id = it.type_id
+      LEFT JOIN history_metrics hm ON hm.type_id = it.type_id
+      LEFT JOIN watchlist w ON w.type_id = it.type_id
+      LEFT JOIN (
+        SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+      ) co ON co.type_id = it.type_id
+      WHERE ms.type_id IS NULL
+        AND it.published = 1
+        AND it.market_group_id IS NOT NULL
+        AND (LOWER(it.name) LIKE ? ESCAPE '\\' OR it.type_id = ?)
+      LIMIT 60
+    `)
+    .all(likePattern, exactId) as unknown as RawScannerRow[];
+}
+
 marketRouter.get('/items', (req, res) => {
+  const db = getDb();
   const fees = getFeeConfig();
   const rows = loadScannerRows();
 
@@ -391,11 +498,31 @@ marketRouter.get('/items', (req, res) => {
     ...multiGroupIds,
   ];
   const allowedMarketGroupIds =
-    targetGroupIds.length > 0 ? getDescendantMarketGroupIds(getDb(), targetGroupIds) : null;
+    targetGroupIds.length > 0 ? getDescendantMarketGroupIds(db, targetGroupIds) : null;
   const trendingOnly = parseBool(req.query.trendingOnly);
   const hideAnomalies = parseBool(req.query.hideAnomalies);
   const watchlistOnly = parseBool(req.query.watchlistOnly);
   const requireHistory = parseBool(req.query.requireHistory);
+
+  const criteria: MarketFilterCriteria = {
+    minRoiPct,
+    maxRoiPct,
+    minPrice,
+    maxPrice,
+    priceField,
+    minNetProfit,
+    minDailyIskVolume,
+    minDailyUnits,
+    maxCompetition,
+    maxRecentUpdates1h,
+    includeRootGroups,
+    excludeRootGroups,
+    allowedMarketGroupIds,
+    trendingOnly,
+    hideAnomalies,
+    watchlistOnly,
+    requireHistory,
+  };
 
   const sortBy = typeof req.query.sortBy === 'string' ? req.query.sortBy : 'tradeScore';
   const sortDir = req.query.sortDir === 'asc' ? 'asc' : 'desc';
@@ -403,42 +530,68 @@ marketRouter.get('/items', (req, res) => {
   const pageSize = Math.min(200, Math.max(10, Math.floor(parseOptionalNumber(req.query.pageSize) ?? 50)));
 
   const matched: MarketItemDto[] = [];
+  const filteredOutRaw: LookupMarketItemDto[] = [];
+  const seenTypeIds = new Set<number>();
+  let excludedByQuickExcludesCount = 0;
+  const excludedByQuickExcludeGroups = new Set<string>();
 
   for (const row of rows) {
     const item = buildItemDto(row, fees);
 
     if (q && !item.name.toLowerCase().includes(q) && String(item.typeId) !== q) continue;
-    if (allowedMarketGroupIds !== null) {
-      if (item.marketGroupId === null || !allowedMarketGroupIds.has(item.marketGroupId)) continue;
-    } else {
-      if (includeRootGroups.size > 0 && !includeRootGroups.has(item.rootGroupName)) continue;
-      if (excludeRootGroups.size > 0 && excludeRootGroups.has(item.rootGroupName)) continue;
-    }
-    if (watchlistOnly && !item.isWatchlisted) continue;
-    if (requireHistory && !item.hasHistory) continue;
-    if (trendingOnly && !item.isTrending) continue;
-    if (hideAnomalies && item.hasAnomaly) continue;
+    seenTypeIds.add(item.typeId);
 
-    if (minRoiPct !== null && item.roiPct < minRoiPct) continue;
-    if (maxRoiPct !== null && item.roiPct > maxRoiPct) continue;
-
-    const targetPrice = priceField === 'sell' ? item.bestAsk : item.bestBid;
-    if (minPrice !== null && targetPrice < minPrice) continue;
-    if (maxPrice !== null && targetPrice > maxPrice) continue;
-
-    if (minNetProfit !== null && item.netProfit < minNetProfit) continue;
-
-    if (minDailyIskVolume !== null) {
-      if (!item.hasHistory || (item.dailyIskVolume7d ?? 0) < minDailyIskVolume) continue;
-    }
-    if (minDailyUnits !== null) {
-      if (!item.hasHistory || (item.dailyVolume7d ?? 0) < minDailyUnits) continue;
+    // Quick Excludes still strictly filter out matching items during search lookup
+    if (q && isQuickExcluded(item.rootGroupName, excludeRootGroups)) {
+      excludedByQuickExcludesCount++;
+      excludedByQuickExcludeGroups.add(item.rootGroupName);
+      continue;
     }
 
-    if (maxCompetition !== null && item.totalCompetition > maxCompetition) continue;
-    if (maxRecentUpdates1h !== null && item.recentUpdates1h > maxRecentUpdates1h) continue;
+    const failedFilters = evaluateItemFilters(item, criteria);
+    if (failedFilters.length === 0) {
+      matched.push(item);
+    } else if (q) {
+      filteredOutRaw.push({ ...item, failedFilters });
+    }
+  }
 
-    matched.push(item);
+  let filteredOutMatches: LookupMarketItemDto[] = [];
+  let filteredOutTotal = 0;
+
+  if (q) {
+    const oneSidedRows = loadOneSidedSearchRows(db, q);
+    for (const row of oneSidedRows) {
+      if (seenTypeIds.has(row.type_id)) continue;
+      seenTypeIds.add(row.type_id);
+      const item = buildItemDto(row, fees);
+      if (isQuickExcluded(item.rootGroupName, excludeRootGroups)) {
+        excludedByQuickExcludesCount++;
+        excludedByQuickExcludeGroups.add(item.rootGroupName);
+        continue;
+      }
+      const failedFilters = evaluateItemFilters(item, criteria);
+      filteredOutRaw.push({ ...item, failedFilters });
+    }
+
+    if (matched.length === 0 && filteredOutRaw.length < 15) {
+      const sdeOnlyRows = loadSdeOnlySearchRows(db, q);
+      for (const row of sdeOnlyRows) {
+        if (seenTypeIds.has(row.type_id)) continue;
+        seenTypeIds.add(row.type_id);
+        const item = buildItemDto(row, fees);
+        if (isQuickExcluded(item.rootGroupName, excludeRootGroups)) {
+          excludedByQuickExcludesCount++;
+          excludedByQuickExcludeGroups.add(item.rootGroupName);
+          continue;
+        }
+        const failedFilters = evaluateItemFilters(item, criteria);
+        filteredOutRaw.push({ ...item, failedFilters });
+      }
+    }
+
+    filteredOutTotal = filteredOutRaw.length;
+    filteredOutMatches = rankLookupMatches(filteredOutRaw, q).slice(0, 25);
   }
 
   const getSortValue = (item: MarketItemDto): number | string | null => {
@@ -518,6 +671,10 @@ marketRouter.get('/items', (req, res) => {
       avgRoiPct,
       trendingInMatchCount,
     },
+    filteredOutMatches,
+    filteredOutTotal,
+    excludedByQuickExcludesCount,
+    excludedByQuickExcludeGroups: Array.from(excludedByQuickExcludeGroups),
   });
 });
 
@@ -687,7 +844,7 @@ marketRouter.get('/items/:typeId', (req, res) => {
   const db = getDb();
   const fees = getFeeConfig();
 
-  const row = db
+  let row = db
     .prepare(`
       SELECT
         ms.*,
@@ -720,7 +877,53 @@ marketRouter.get('/items/:typeId', (req, res) => {
     .get(typeId) as RawScannerRow | undefined;
 
   if (!row) {
-    res.status(404).json({ error: 'Item has no active Jita 4-4 summary data yet.' });
+    row = db
+      .prepare(`
+        SELECT
+          it.type_id,
+          NULL AS best_bid,
+          NULL AS best_ask,
+          NULL AS raw_best_bid,
+          1 AS bid_min_volume,
+          0 AS bid_volume,
+          0 AS ask_volume,
+          0 AS buy_order_count,
+          0 AS sell_order_count,
+          0 AS top_buy_competition,
+          0 AS top_sell_competition,
+          0 AS recent_updates_1h,
+          0 AS recent_updates_24h,
+          COALESCE(hm.updated_at, '') AS updated_at,
+          it.name,
+          it.market_group_id,
+          it.root_group_id,
+          it.root_group_name,
+          it.volume,
+          hm.daily_volume_7d,
+          hm.daily_volume_30d,
+          hm.daily_isk_volume_7d,
+          hm.daily_isk_volume_30d,
+          hm.avg_price_7d,
+          hm.avg_price_30d,
+          hm.volume_trend_pct,
+          hm.price_trend_pct,
+          hm.active_days_30d,
+          hm.updated_at AS history_updated_at,
+          CASE WHEN w.type_id IS NOT NULL THEN 1 ELSE 0 END AS is_watchlisted,
+          COALESCE(co.cnt, 0) AS char_order_count
+        FROM item_types it
+        LEFT JOIN history_metrics hm ON hm.type_id = it.type_id
+        LEFT JOIN watchlist w ON w.type_id = it.type_id
+        LEFT JOIN (
+          SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+        ) co ON co.type_id = it.type_id
+        WHERE it.type_id = ?
+      `)
+      .get(typeId) as RawScannerRow | undefined;
+  }
+
+  if (!row) {
+    res.status(404).json({ error: 'Item not found in local Jita 4-4 or SDE catalog.' });
     return;
   }
 

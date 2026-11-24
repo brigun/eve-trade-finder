@@ -3,6 +3,8 @@
   "version": "1.0.0",
   "private": true,
   "description": "JITA IV // MONOLITH — EVE Online Jita 4-4 Trade Terminal",
+  "author": "brigun",
+  "main": "electron/main.mjs",
   "workspaces": [
     "server",
     "client"
@@ -11,9 +13,20 @@
     "dev": "concurrently -k -n SERVER,CLIENT -c magenta,green \"npm run dev --workspace=server\" \"npm run dev --workspace=client\"",
     "build": "npm run build --workspace=server && npm run build --workspace=client",
     "start": "npm run start --workspace=server",
-    "test": "npm test --workspace=server"
+    "test": "npm test --workspace=server",
+    "desktop:dev": "npm run build && electron .",
+    "desktop:build": "npm run build && electron-builder",
+    "desktop:build:win": "npm run build && electron-builder --win nsis",
+    "desktop:build:mac": "npm run build && electron-builder --mac dmg",
+    "desktop:build:linux": "npm run build && electron-builder --linux AppImage"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^5.1.0"
   },
   "devDependencies": {
-    "concurrently": "^9.1.2"
+    "concurrently": "^9.1.2",
+    "electron": "^45.4.1",
+    "electron-builder": "^26.18.0"
   }
 }

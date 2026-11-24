@@ -13,7 +13,12 @@ import {
   X,
 } from 'lucide-react';
 import { formatShorthandInput, parseIskShorthand } from '../lib/format.ts';
-import type { FilterPreset, FilterState, MarketGroupTreeNode } from '../types/api.ts';
+import type {
+  FilterKey,
+  FilterPreset,
+  FilterState,
+  MarketGroupTreeNode,
+} from '../types/api.ts';
 import { MarketGroupPicker } from './MarketGroupPicker.tsx';
 
 interface FilterBarProps {
@@ -21,6 +26,10 @@ interface FilterBarProps {
   presets: FilterPreset[];
   groupTree: MarketGroupTreeNode[];
   activePresetName: string | null;
+  breakingFilterKeys?: Set<FilterKey>;
+  breakingExcludedGroups?: Set<string>;
+  breakingFilterReasons?: Map<FilterKey, string>;
+  lookupFocusName?: string | null;
   onChange: (next: FilterState) => void;
   onReset: () => void;
   onApplyPreset: (preset: FilterPreset) => void;
@@ -32,10 +41,17 @@ interface ShorthandInputProps {
   label: string;
   value: number | null;
   placeholder: string;
+  breakingReason?: string;
   onCommit: (val: number | null) => void;
 }
 
-function ShorthandNumericInput({ label, value, placeholder, onCommit }: ShorthandInputProps) {
+function ShorthandNumericInput({
+  label,
+  value,
+  placeholder,
+  breakingReason,
+  onCommit,
+}: ShorthandInputProps) {
   const [draft, setDraft] = useState(() => formatShorthandInput(value));
 
   useEffect(() => {
@@ -48,10 +64,17 @@ function ShorthandNumericInput({ label, value, placeholder, onCommit }: Shorthan
     setDraft(formatShorthandInput(parsed));
   };
 
+  const isBreaking = Boolean(breakingReason);
+
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C]">
-        {label}
+    <label className="flex flex-col gap-1" title={breakingReason}>
+      <span
+        className={`text-[10px] font-mono-num uppercase tracking-wider flex items-center gap-1 ${
+          isBreaking ? 'text-[#FF4D6D] font-semibold' : 'text-[#656A7C]'
+        }`}
+      >
+        {isBreaking && <span className="w-1.5 h-1.5 rounded-full bg-[#FF4D6D] shrink-0" />}
+        <span className="truncate">{label}</span>
       </span>
       <input
         type="text"
@@ -65,7 +88,11 @@ function ShorthandNumericInput({ label, value, placeholder, onCommit }: Shorthan
           }
         }}
         placeholder={placeholder}
-        className="w-full px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs font-mono-num text-[#EFEAE0] placeholder:text-[#656A7C]/70"
+        className={`w-full px-2.5 py-1.5 rounded border focus:outline-none text-xs font-mono-num text-[#EFEAE0] placeholder:text-[#656A7C]/70 transition-colors ${
+          isBreaking
+            ? 'bg-[#FF4D6D]/10 border-[#FF4D6D] ring-1 ring-[#FF4D6D]/55 focus:border-[#FF4D6D]'
+            : 'bg-[#08090D] border-[#262938] focus:border-[#9B7BFF]'
+        }`}
       />
     </label>
   );
@@ -75,11 +102,13 @@ function PercentInput({
   label,
   value,
   placeholder,
+  breakingReason,
   onCommit,
 }: {
   label: string;
   value: number | null;
   placeholder: string;
+  breakingReason?: string;
   onCommit: (val: number | null) => void;
 }) {
   const [draft, setDraft] = useState(value !== null ? String(value) : '');
@@ -98,10 +127,17 @@ function PercentInput({
     onCommit(Number.isFinite(n) ? n : null);
   };
 
+  const isBreaking = Boolean(breakingReason);
+
   return (
-    <label className="flex flex-col gap-1">
-      <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C]">
-        {label}
+    <label className="flex flex-col gap-1" title={breakingReason}>
+      <span
+        className={`text-[10px] font-mono-num uppercase tracking-wider flex items-center gap-1 ${
+          isBreaking ? 'text-[#FF4D6D] font-semibold' : 'text-[#656A7C]'
+        }`}
+      >
+        {isBreaking && <span className="w-1.5 h-1.5 rounded-full bg-[#FF4D6D] shrink-0" />}
+        <span className="truncate">{label}</span>
       </span>
       <input
         type="text"
@@ -115,7 +151,11 @@ function PercentInput({
           }
         }}
         placeholder={placeholder}
-        className="w-full px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs font-mono-num text-[#EFEAE0] placeholder:text-[#656A7C]/70"
+        className={`w-full px-2.5 py-1.5 rounded border focus:outline-none text-xs font-mono-num text-[#EFEAE0] placeholder:text-[#656A7C]/70 transition-colors ${
+          isBreaking
+            ? 'bg-[#FF4D6D]/10 border-[#FF4D6D] ring-1 ring-[#FF4D6D]/55 focus:border-[#FF4D6D]'
+            : 'bg-[#08090D] border-[#262938] focus:border-[#9B7BFF]'
+        }`}
       />
     </label>
   );
@@ -213,6 +253,10 @@ export function FilterBar({
   presets,
   groupTree,
   activePresetName,
+  breakingFilterKeys,
+  breakingExcludedGroups,
+  breakingFilterReasons,
+  lookupFocusName,
   onChange,
   onReset,
   onApplyPreset,
@@ -222,6 +266,30 @@ export function FilterBar({
   const [savingPreset, setSavingPreset] = useState(false);
   const [presetName, setPresetName] = useState('');
   const [showMoreFilters, setShowMoreFilters] = useState(true);
+
+  const isBreaking = (key: FilterKey): boolean => Boolean(breakingFilterKeys?.has(key));
+  const breakingTip = (key: FilterKey): string | undefined => {
+    if (!breakingFilterKeys?.has(key)) return undefined;
+    const raw = breakingFilterReasons?.get(key) ?? 'Blocking lookup match';
+    return lookupFocusName ? `Blocking "${lookupFocusName}": ${raw}` : `Blocking filter: ${raw}`;
+  };
+
+  const collapsibleBreakingKeys: FilterKey[] = [
+    'minRoiPct',
+    'maxRoiPct',
+    'minPrice',
+    'maxPrice',
+    'minDailyIskVolume',
+    'minDailyUnits',
+    'maxCompetition',
+    'maxRecentUpdates1h',
+    'marketGroup',
+    'includeRootGroups',
+    'excludeRootGroups',
+  ];
+  const hiddenBreakingCount = !showMoreFilters
+    ? collapsibleBreakingKeys.filter((k) => isBreaking(k)).length
+    : 0;
 
   const toggleExcludedGroup = (groupName: string) => {
     const exists = filters.excludeRootGroups.includes(groupName);
@@ -245,16 +313,27 @@ export function FilterBar({
     <section className="bg-[#0F1118] border border-[#262938] rounded-md p-3.5 space-y-3">
       {/* Row 1: Search, Presets, Quick Toggles */}
       <div className="flex flex-wrap items-center gap-2.5">
-        {/* Search Input */}
+        {/* Search / Lookup Input */}
         <div className="relative flex-1 min-w-[220px]">
           <Search className="w-3.5 h-3.5 text-[#656A7C] absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           <input
             type="text"
             value={filters.q}
             onChange={(e) => onChange({ ...filters, q: e.target.value })}
-            placeholder="Search Jita 4-4 item name or Type ID..."
-            className="w-full pl-8 pr-3 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs text-[#EFEAE0] placeholder:text-[#656A7C]"
+            placeholder="Lookup any Jita item by name or Type ID..."
+            className="w-full pl-8 pr-7 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs text-[#EFEAE0] placeholder:text-[#656A7C]"
           />
+          {filters.q && (
+            <button
+              type="button"
+              onClick={() => onChange({ ...filters, q: '' })}
+              aria-label="Clear search"
+              title="Clear lookup"
+              className="absolute right-2 top-1/2 -translate-y-1/2 p-0.5 rounded text-[#656A7C] hover:text-[#EFEAE0] cursor-pointer"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          )}
         </div>
 
         {/* Preset Selector */}
@@ -301,11 +380,14 @@ export function FilterBar({
         <div className="flex flex-wrap items-center gap-1.5">
           <button
             type="button"
+            title={breakingTip('trendingOnly')}
             onClick={() => onChange({ ...filters, trendingOnly: !filters.trendingOnly })}
             className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
-              filters.trendingOnly
-                ? 'bg-[#46E595]/15 text-[#46E595] border-[#46E595]/50'
-                : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
+              isBreaking('trendingOnly')
+                ? 'bg-[#FF4D6D]/18 text-[#FF4D6D] border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60'
+                : filters.trendingOnly
+                  ? 'bg-[#46E595]/15 text-[#46E595] border-[#46E595]/50'
+                  : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
             }`}
           >
             <Flame className="w-3.5 h-3.5" />
@@ -314,11 +396,14 @@ export function FilterBar({
 
           <button
             type="button"
+            title={breakingTip('hideAnomalies')}
             onClick={() => onChange({ ...filters, hideAnomalies: !filters.hideAnomalies })}
             className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
-              filters.hideAnomalies
-                ? 'bg-[#9B7BFF]/18 text-[#B298FF] border-[#9B7BFF]/50'
-                : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
+              isBreaking('hideAnomalies')
+                ? 'bg-[#FF4D6D]/18 text-[#FF4D6D] border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60'
+                : filters.hideAnomalies
+                  ? 'bg-[#9B7BFF]/18 text-[#B298FF] border-[#9B7BFF]/50'
+                  : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
             }`}
           >
             <ShieldAlert className="w-3.5 h-3.5" />
@@ -327,11 +412,14 @@ export function FilterBar({
 
           <button
             type="button"
+            title={breakingTip('watchlistOnly')}
             onClick={() => onChange({ ...filters, watchlistOnly: !filters.watchlistOnly })}
             className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
-              filters.watchlistOnly
-                ? 'bg-[#E07A63]/18 text-[#E07A63] border-[#E07A63]/50'
-                : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
+              isBreaking('watchlistOnly')
+                ? 'bg-[#FF4D6D]/18 text-[#FF4D6D] border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60'
+                : filters.watchlistOnly
+                  ? 'bg-[#E07A63]/18 text-[#E07A63] border-[#E07A63]/50'
+                  : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
             }`}
           >
             <Bookmark className="w-3.5 h-3.5" />
@@ -340,11 +428,14 @@ export function FilterBar({
 
           <button
             type="button"
+            title={breakingTip('requireHistory')}
             onClick={() => onChange({ ...filters, requireHistory: !filters.requireHistory })}
             className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs font-medium border transition-colors cursor-pointer ${
-              filters.requireHistory
-                ? 'bg-[#9B7BFF]/18 text-[#B298FF] border-[#9B7BFF]/50'
-                : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
+              isBreaking('requireHistory')
+                ? 'bg-[#FF4D6D]/18 text-[#FF4D6D] border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60'
+                : filters.requireHistory
+                  ? 'bg-[#9B7BFF]/18 text-[#B298FF] border-[#9B7BFF]/50'
+                  : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
             }`}
           >
             <Filter className="w-3 h-3" />
@@ -356,10 +447,22 @@ export function FilterBar({
           <button
             type="button"
             onClick={() => setShowMoreFilters((v) => !v)}
-            className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs bg-[#161923] border border-[#262938] text-[#9CA0B0] hover:text-[#EFEAE0] cursor-pointer"
+            className={`inline-flex items-center gap-1 px-2.5 py-1.5 rounded text-xs border cursor-pointer transition-colors ${
+              hiddenBreakingCount > 0
+                ? 'bg-[#FF4D6D]/15 border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60 text-[#FF4D6D]'
+                : 'bg-[#161923] border-[#262938] text-[#9CA0B0] hover:text-[#EFEAE0]'
+            }`}
           >
-            <SlidersHorizontal className="w-3.5 h-3.5 text-[#9B7BFF]" />
-            <span>{showMoreFilters ? 'Hide Constraints' : 'Constraints'}</span>
+            <SlidersHorizontal
+              className={`w-3.5 h-3.5 ${hiddenBreakingCount > 0 ? 'text-[#FF4D6D]' : 'text-[#9B7BFF]'}`}
+            />
+            <span>
+              {showMoreFilters
+                ? 'Hide Constraints'
+                : hiddenBreakingCount > 0
+                  ? `Constraints (${hiddenBreakingCount} blocking)`
+                  : 'Constraints'}
+            </span>
           </button>
 
           <button
@@ -411,24 +514,28 @@ export function FilterBar({
               label="Min Profit %"
               value={filters.minRoiPct}
               placeholder="e.g. 8"
+              breakingReason={breakingTip('minRoiPct')}
               onCommit={(v) => onChange({ ...filters, minRoiPct: v })}
             />
             <PercentInput
               label="Max Profit %"
               value={filters.maxRoiPct}
               placeholder="e.g. 120"
+              breakingReason={breakingTip('maxRoiPct')}
               onCommit={(v) => onChange({ ...filters, maxRoiPct: v })}
             />
             <ShorthandNumericInput
               label="Min Price (ISK)"
               value={filters.minPrice}
               placeholder="e.g. 100k"
+              breakingReason={breakingTip('minPrice')}
               onCommit={(v) => onChange({ ...filters, minPrice: v })}
             />
             <ShorthandNumericInput
               label="Max Price (ISK)"
               value={filters.maxPrice}
               placeholder="e.g. 500m"
+              breakingReason={breakingTip('maxPrice')}
               onCommit={(v) => onChange({ ...filters, maxPrice: v })}
             />
             <label className="flex flex-col gap-1">
@@ -450,24 +557,28 @@ export function FilterBar({
               label="Min Daily ISK Vol"
               value={filters.minDailyIskVolume}
               placeholder="e.g. 20m"
+              breakingReason={breakingTip('minDailyIskVolume')}
               onCommit={(v) => onChange({ ...filters, minDailyIskVolume: v })}
             />
             <PercentInput
               label="Min Daily Units"
               value={filters.minDailyUnits}
               placeholder="e.g. 5"
+              breakingReason={breakingTip('minDailyUnits')}
               onCommit={(v) => onChange({ ...filters, minDailyUnits: v })}
             />
             <PercentInput
               label="Max 2% Competing"
               value={filters.maxCompetition}
               placeholder="e.g. 15"
+              breakingReason={breakingTip('maxCompetition')}
               onCommit={(v) => onChange({ ...filters, maxCompetition: v })}
             />
             <PercentInput
               label="Max 1h Updates"
               value={filters.maxRecentUpdates1h}
               placeholder="e.g. 12"
+              breakingReason={breakingTip('maxRecentUpdates1h')}
               onCommit={(v) => onChange({ ...filters, maxRecentUpdates1h: v })}
             />
           </div>
@@ -520,12 +631,20 @@ export function FilterBar({
 
           {/* Market Category Filter Row */}
           <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C]">
+            <span
+              className={`text-[10px] font-mono-num uppercase tracking-wider ${
+                isBreaking('marketGroup') || isBreaking('includeRootGroups')
+                  ? 'text-[#FF4D6D] font-semibold'
+                  : 'text-[#656A7C]'
+              }`}
+            >
               Market Segment:
             </span>
             <MarketGroupPicker
               tree={groupTree}
               selectedGroupId={filters.marketGroupId}
+              breaking={isBreaking('marketGroup') || isBreaking('includeRootGroups')}
+              breakingReason={breakingTip('marketGroup') ?? breakingTip('includeRootGroups')}
               onSelect={(groupId) =>
                 onChange({
                   ...filters,
@@ -537,7 +656,14 @@ export function FilterBar({
             />
 
             {filters.marketGroupIds.length > 0 && (
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded bg-[#9B7BFF]/18 border border-[#9B7BFF]/45 text-[11px] font-mono-num text-[#EFEAE0]">
+              <span
+                title={breakingTip('marketGroup')}
+                className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded text-[11px] font-mono-num border ${
+                  isBreaking('marketGroup')
+                    ? 'bg-[#FF4D6D]/18 border-[#FF4D6D] ring-1 ring-[#FF4D6D]/60 text-[#FF4D6D]'
+                    : 'bg-[#9B7BFF]/18 border-[#9B7BFF]/45 text-[#EFEAE0]'
+                }`}
+              >
                 <span>
                   {filters.marketGroupIds.join(',') === '1332,1035'
                     ? 'PI Materials + Construction Components'
@@ -559,15 +685,19 @@ export function FilterBar({
             </span>
             {QUICK_EXCLUDE_GROUPS.map((grp) => {
               const active = filters.excludeRootGroups.includes(grp);
+              const groupBreaking = Boolean(breakingExcludedGroups?.has(grp));
               return (
                 <button
                   key={grp}
                   type="button"
+                  title={groupBreaking ? breakingTip('excludeRootGroups') : undefined}
                   onClick={() => toggleExcludedGroup(grp)}
                   className={`px-2 py-0.5 rounded text-[11px] border transition-colors cursor-pointer ${
-                    active
-                      ? 'bg-[#FF4D6D]/12 text-[#FF4D6D] border-[#FF4D6D]/40'
-                      : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
+                    groupBreaking
+                      ? 'bg-[#FF4D6D]/25 text-[#EFEAE0] border-[#FF4D6D] ring-2 ring-[#FF4D6D]/75 font-semibold'
+                      : active
+                        ? 'bg-[#FF4D6D]/12 text-[#FF4D6D] border-[#FF4D6D]/40'
+                        : 'bg-[#161923] text-[#9CA0B0] border-[#262938] hover:text-[#EFEAE0]'
                   }`}
                 >
                   {active ? `Excluding ${grp}` : `Exclude ${grp}`}

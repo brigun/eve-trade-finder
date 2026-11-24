@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
 import { AskNeonModal } from './components/AskNeonModal.tsx';
 import { FilterBar } from './components/FilterBar.tsx';
@@ -13,8 +13,11 @@ import { WatchlistView } from './components/WatchlistView.tsx';
 import { api } from './lib/api.ts';
 import type {
   FeeConfig,
+  FilterFailure,
+  FilterKey,
   FilterPreset,
   FilterState,
+  LookupMarketItem,
   MarketGroupTreeNode,
   MarketItem,
   MarketStats,
@@ -59,6 +62,11 @@ export default function App() {
   const [page, setPage] = useState(1);
 
   const [items, setItems] = useState<MarketItem[]>([]);
+  const [filteredOutMatches, setFilteredOutMatches] = useState<LookupMarketItem[]>([]);
+  const [filteredOutTotal, setFilteredOutTotal] = useState(0);
+  const [excludedByQuickExcludesCount, setExcludedByQuickExcludesCount] = useState(0);
+  const [excludedByQuickExcludeGroups, setExcludedByQuickExcludeGroups] = useState<string[]>([]);
+  const [hoveredLookupTypeId, setHoveredLookupTypeId] = useState<number | null>(null);
   const [total, setTotal] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
   const [avgRoiPct, setAvgRoiPct] = useState(0);
@@ -121,6 +129,10 @@ export default function App() {
     try {
       const res = await api.getMarketItems(filters, page, 50);
       setItems(res.items);
+      setFilteredOutMatches(res.filteredOutMatches ?? []);
+      setFilteredOutTotal(res.filteredOutTotal ?? 0);
+      setExcludedByQuickExcludesCount(res.excludedByQuickExcludesCount ?? 0);
+      setExcludedByQuickExcludeGroups(res.excludedByQuickExcludeGroups ?? []);
       setTotal(res.total);
       setTotalPages(res.totalPages);
       setFees(res.fees);
@@ -238,14 +250,118 @@ export default function App() {
   const handleFilterChange = (next: FilterState) => {
     setActivePresetName(null);
     setPage(1);
+    if (next.q !== filters.q) {
+      setHoveredLookupTypeId(null);
+    }
     setFilters(next);
   };
 
   const handleResetFilters = () => {
     setActivePresetName(null);
+    setHoveredLookupTypeId(null);
     setPage(1);
     setFilters(DEFAULT_FILTERS);
   };
+
+  const handleRelaxFilter = (failure: FilterFailure) => {
+    setActivePresetName(null);
+    setPage(1);
+    setFilters((prev) => {
+      switch (failure.key) {
+        case 'minRoiPct':
+          return { ...prev, minRoiPct: null };
+        case 'maxRoiPct':
+          return { ...prev, maxRoiPct: null };
+        case 'minPrice':
+          return { ...prev, minPrice: null };
+        case 'maxPrice':
+          return { ...prev, maxPrice: null };
+        case 'minNetProfit':
+          return { ...prev, minNetProfit: null };
+        case 'minDailyIskVolume':
+          return { ...prev, minDailyIskVolume: null };
+        case 'minDailyUnits':
+          return { ...prev, minDailyUnits: null };
+        case 'maxCompetition':
+          return { ...prev, maxCompetition: null };
+        case 'maxRecentUpdates1h':
+          return { ...prev, maxRecentUpdates1h: null };
+        case 'trendingOnly':
+          return { ...prev, trendingOnly: false };
+        case 'hideAnomalies':
+          return { ...prev, hideAnomalies: false };
+        case 'watchlistOnly':
+          return { ...prev, watchlistOnly: false };
+        case 'requireHistory':
+          return { ...prev, requireHistory: false };
+        case 'marketGroup':
+          return { ...prev, marketGroupId: null, marketGroupIds: [] };
+        case 'includeRootGroups':
+          return { ...prev, includeRootGroups: [] };
+        case 'excludeRootGroups':
+          return {
+            ...prev,
+            excludeRootGroups: failure.excludedGroup
+              ? prev.excludeRootGroups.filter((g) => g !== failure.excludedGroup)
+              : [],
+          };
+        default:
+          return prev;
+      }
+    });
+  };
+
+  const activeLookupFocus = useMemo<LookupMarketItem | null>(() => {
+    if (!filters.q.trim() || filteredOutMatches.length === 0) return null;
+    if (hoveredLookupTypeId !== null) {
+      const hovered = filteredOutMatches.find((m) => m.typeId === hoveredLookupTypeId);
+      if (hovered) return hovered;
+    }
+    return items.length === 0 ? filteredOutMatches[0] : null;
+  }, [filters.q, filteredOutMatches, hoveredLookupTypeId, items.length]);
+
+  const { breakingFilterKeys, breakingExcludedGroups, breakingFilterReasons } = useMemo(() => {
+    const keys = new Set<FilterKey>();
+    const excluded = new Set<string>();
+    const reasons = new Map<FilterKey, string>();
+    if (activeLookupFocus) {
+      for (const f of activeLookupFocus.failedFilters) {
+        keys.add(f.key);
+        if (!reasons.has(f.key)) {
+          reasons.set(f.key, f.reason);
+        }
+        if (f.excludedGroup) {
+          excluded.add(f.excludedGroup);
+        }
+      }
+    } else if (
+      filters.q.trim() &&
+      items.length === 0 &&
+      filteredOutMatches.length === 0 &&
+      excludedByQuickExcludeGroups.length > 0
+    ) {
+      keys.add('excludeRootGroups');
+      reasons.set(
+        'excludeRootGroups',
+        `Hiding ${excludedByQuickExcludesCount} search match(es)`,
+      );
+      for (const grp of excludedByQuickExcludeGroups) {
+        excluded.add(grp);
+      }
+    }
+    return {
+      breakingFilterKeys: keys,
+      breakingExcludedGroups: excluded,
+      breakingFilterReasons: reasons,
+    };
+  }, [
+    activeLookupFocus,
+    filters.q,
+    items.length,
+    filteredOutMatches.length,
+    excludedByQuickExcludesCount,
+    excludedByQuickExcludeGroups,
+  ]);
 
   const handleApplyPreset = (preset: FilterPreset) => {
     setActivePresetName(preset.name);
@@ -376,6 +492,10 @@ export default function App() {
               presets={presets}
               groupTree={groupTree}
               activePresetName={activePresetName}
+              breakingFilterKeys={breakingFilterKeys}
+              breakingExcludedGroups={breakingExcludedGroups}
+              breakingFilterReasons={breakingFilterReasons}
+              lookupFocusName={activeLookupFocus?.name ?? null}
               onChange={handleFilterChange}
               onReset={handleResetFilters}
               onApplyPreset={handleApplyPreset}
@@ -395,12 +515,20 @@ export default function App() {
               selectedTypeId={selectedTypeId}
               sortBy={filters.sortBy}
               sortDir={filters.sortDir}
+              searchQuery={filters.q}
+              filteredOutMatches={filteredOutMatches}
+              filteredOutTotal={filteredOutTotal}
+              excludedByQuickExcludesCount={excludedByQuickExcludesCount}
+              excludedByQuickExcludeGroups={excludedByQuickExcludeGroups}
+              activeLookupTypeId={activeLookupFocus?.typeId ?? null}
               onSort={handleSort}
               onPageChange={setPage}
               onSelectItem={(item) => setSelectedTypeId(item.typeId)}
               onToggleWatchlist={(item) => void handleToggleWatchlist(item)}
               onSyncOrders={() => void handleSyncOrders()}
               onResetFilters={handleResetFilters}
+              onHoverLookupItem={setHoveredLookupTypeId}
+              onRelaxFilter={handleRelaxFilter}
             />
           </>
         )}
