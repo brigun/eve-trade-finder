@@ -1,3 +1,4 @@
+import { getHubById, resolveHubId, type HubId } from '../config.js';
 import { getDb } from '../db/database.js';
 import {
   buildItemDto,
@@ -21,6 +22,7 @@ import {
 import { nextEveTick } from './tradeAnalytics.js';
 
 export interface AskNeonRequest {
+  hubId?: HubId;
   budgetIsk?: number | null;
   sessionStyle?: NeonSessionStyle;
   userNote?: string;
@@ -39,6 +41,8 @@ export interface LlmModelOption {
 export interface NeonBriefingResponse {
   id: number;
   createdAt: string;
+  hubId?: HubId;
+  hubName?: string;
   provider: 'gemini' | 'openai_compat';
   model: string;
   thinkingLevel?: LlmThinkingLevel;
@@ -53,8 +57,8 @@ export interface NeonBriefingResponse {
 }
 
 const NEON_SYSTEM_PROMPT = [
-  'You are Neon, an elite quantitative EVE Online Jita 4-4 station-trading advisor.',
-  'Given pre-filtered live market candidates from Jita IV - Moon 4 CNAP, choose the TOP 3 trades for this trading session.',
+  'You are Neon, an elite quantitative EVE Online station-trading advisor.',
+  'Given pre-filtered live market candidates from the selected EVE trade hub, choose the TOP 3 trades for this trading session.',
   'Evaluate every pick strictly using the provided metrics:',
   '1) Unit price practicality & net ROI% after broker/tax fees,',
   '2) Order book depth (bidDepthIsk, askDepthIsk, buyOrders/sellOrders),',
@@ -420,9 +424,10 @@ export async function consultNeon(req: AskNeonRequest): Promise<NeonBriefingResp
 
   const db = getDb();
   const fees = getFeeConfig();
-  const rawRows = loadScannerRows();
+  const hub = getHubById(resolveHubId(req.hubId));
+  const rawRows = loadScannerRows(hub.id);
   if (rawRows.length === 0) {
-    throw new Error('No Jita 4-4 market data synced yet. Click Sync Jita first.');
+    throw new Error(`No ${hub.name} market data synced yet. Click Sync ${hub.shortName} first.`);
   }
 
   const targetGroupIds = [
@@ -468,14 +473,18 @@ export async function consultNeon(req: AskNeonRequest): Promise<NeonBriefingResp
 
   if (candidates.length === 0) {
     throw new Error(
-      'No Jita 4-4 items matched your current segment, budget, and minimum ROI constraints.',
+      `No ${hub.name} items matched your current segment, budget, and minimum ROI constraints.`,
     );
   }
 
-  const scopeLabel = getGroupScopeLabel(db, targetGroupIds);
+  const scopeLabel = getGroupScopeLabel(db, targetGroupIds, hub.id);
   const userPrompt = JSON.stringify({
     sessionContext: {
-      station: 'Jita IV - Moon 4 - Caldari Navy Assembly Plant',
+      hubId: hub.id,
+      hubName: hub.name,
+      station: hub.stationName,
+      region: hub.regionName,
+      security: hub.security,
       scopeLabel,
       sessionStyle,
       budgetIsk,
@@ -504,6 +513,8 @@ export async function consultNeon(req: AskNeonRequest): Promise<NeonBriefingResp
   const createdAt = new Date().toISOString();
   const briefingWithoutId = {
     createdAt,
+    hubId: hub.id,
+    hubName: hub.name,
     provider: llm.provider,
     model: effectiveModel,
     thinkingLevel: effectiveThinkingLevel,

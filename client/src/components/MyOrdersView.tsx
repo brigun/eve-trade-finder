@@ -12,31 +12,36 @@ import {
   formatIskExact,
   formatRelativeTime,
 } from '../lib/format.ts';
-import type { CharacterOrderItem, SsoStatusResponse } from '../types/api.ts';
+import { getHubMeta } from '../lib/hubs.ts';
+import type { CharacterOrderItem, HubId, SsoStatusResponse } from '../types/api.ts';
 import { ItemIcon } from './ItemIcon.tsx';
 
 interface MyOrdersViewProps {
+  activeHub: HubId;
   ssoStatus: SsoStatusResponse | null;
   onRefreshAuth: () => Promise<void>;
-  onSelectTypeId: (typeId: number) => void;
+  onSelectTypeId: (typeId: number, hubId?: HubId) => void;
   onNotify: (msg: string) => void;
 }
 
 export function MyOrdersView({
+  activeHub,
   ssoStatus,
   onRefreshAuth,
   onSelectTypeId,
   onNotify,
 }: MyOrdersViewProps) {
   const [orders, setOrders] = useState<CharacterOrderItem[]>([]);
+  const [scope, setScope] = useState<'all' | 'active'>('all');
   const [loading, setLoading] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [clientIdInput, setClientIdInput] = useState('');
+  const hubMeta = getHubMeta(activeHub);
 
-  const loadOrders = async () => {
+  const loadOrders = async (targetScope = scope, targetHub = activeHub) => {
     setLoading(true);
     try {
-      const res = await api.getCharacterOrders();
+      const res = await api.getCharacterOrders(targetScope === 'active' ? targetHub : 'all');
       setOrders(res.orders);
     } finally {
       setLoading(false);
@@ -45,11 +50,11 @@ export function MyOrdersView({
 
   useEffect(() => {
     if (ssoStatus?.connected) {
-      void loadOrders();
+      void loadOrders(scope, activeHub);
     } else {
       setOrders([]);
     }
-  }, [ssoStatus?.connected]);
+  }, [ssoStatus?.connected, scope, activeHub]);
 
   const handleSaveClientAndConnect = async () => {
     try {
@@ -68,10 +73,10 @@ export function MyOrdersView({
     try {
       const res = await api.syncCharacter();
       onNotify(
-        `Synced ${res.characterName}: ${res.jitaOrdersCount} active Jita 4-4 orders & updated fees`,
+        `Synced ${res.characterName}: ${res.jitaOrdersCount} active hub orders & updated fees`,
       );
       await onRefreshAuth();
-      await loadOrders();
+      await loadOrders(scope, activeHub);
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'Character sync failed');
     } finally {
@@ -107,7 +112,7 @@ export function MyOrdersView({
               Connect your EVE character to automatically import your{' '}
               <span className="text-[#EFEAE0]">Accounting</span> &{' '}
               <span className="text-[#EFEAE0]">Broker Relations</span> skills, Caldari Navy / State
-              standings, and track whether your active Jita 4-4 orders are{' '}
+              standings, and track whether your active trade hub orders are{' '}
               <span className="text-[#46E595]">BEST</span> or{' '}
               <span className="text-[#FF4D6D]">UNDERCUT / OUTBID</span>.
             </p>
@@ -177,7 +182,7 @@ export function MyOrdersView({
                 <code className="px-1.5 py-0.5 rounded bg-[#08090D] font-mono-num text-[#B298FF]">
                   esi-markets.read_character_orders.v1
                 </code>{' '}
-                — Active Jita 4-4 buy/sell order tracking
+                — Active 6-hub buy/sell order tracking
               </li>
             </ul>
           </div>
@@ -243,7 +248,7 @@ export function MyOrdersView({
               </span>
             </div>
             <p className="text-xs font-mono-num text-[#9CA0B0]">
-              {orders.length} active Jita 4-4 orders ·{' '}
+              {orders.length} active {scope === 'active' ? hubMeta.name : '6-hub'} orders ·{' '}
               <span className={undercutCount > 0 ? 'text-[#FF4D6D]' : 'text-[#46E595]'}>
                 {undercutCount} undercut/outbid
               </span>
@@ -251,7 +256,31 @@ export function MyOrdersView({
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex items-center bg-[#08090D] p-0.5 rounded border border-[#262938] text-[11px] font-mono-num">
+            <button
+              type="button"
+              onClick={() => setScope('all')}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors ${
+                scope === 'all'
+                  ? 'bg-[#9B7BFF]/20 text-[#EFEAE0]'
+                  : 'text-[#9CA0B0] hover:text-[#EFEAE0]'
+              }`}
+            >
+              All 6 Hubs
+            </button>
+            <button
+              type="button"
+              onClick={() => setScope('active')}
+              className={`px-2 py-1 rounded cursor-pointer transition-colors ${
+                scope === 'active'
+                  ? 'bg-[#9B7BFF]/20 text-[#EFEAE0]'
+                  : 'text-[#9CA0B0] hover:text-[#EFEAE0]'
+              }`}
+            >
+              {hubMeta.shortName} Only
+            </button>
+          </div>
           <button
             type="button"
             onClick={() => void handleSyncChar()}
@@ -279,17 +308,19 @@ export function MyOrdersView({
           </div>
         ) : orders.length === 0 ? (
           <div className="p-8 text-center text-xs text-[#9CA0B0]">
-            No active buy or sell orders found in Jita 4-4 for this character.
+            No active buy or sell orders found in{' '}
+            {scope === 'active' ? hubMeta.name : 'the 6 tracked trade hubs'} for this character.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full border-collapse text-left">
               <thead className="bg-[#161923] border-b border-[#262938] text-[10px] font-mono-num uppercase tracking-wider text-[#9CA0B0]">
                 <tr>
+                  <th className="px-3 py-2.5">Hub</th>
                   <th className="px-3 py-2.5">Side</th>
                   <th className="px-3 py-2.5">Item</th>
                   <th className="px-3 py-2.5 text-right">Your Price</th>
-                  <th className="px-3 py-2.5 text-right">Jita Best</th>
+                  <th className="px-3 py-2.5 text-right">Hub Best</th>
                   <th className="px-3 py-2.5 text-center">Status</th>
                   <th className="px-3 py-2.5 text-right">Remaining</th>
                   <th className="px-3 py-2.5 text-right">Issued</th>
@@ -300,12 +331,22 @@ export function MyOrdersView({
                 {orders.map((order) => {
                   const isBest = order.status === 'BEST';
                   const isBeat = order.status === 'UNDERCUT' || order.status === 'OUTBID';
+                  const orderHub = getHubMeta(order.hubId);
                   return (
                     <tr
                       key={order.orderId}
-                      onClick={() => onSelectTypeId(order.typeId)}
+                      onClick={() => onSelectTypeId(order.typeId, order.hubId)}
                       className="hover:bg-[#161923]/80 cursor-pointer transition-colors"
                     >
+                      <td className="px-3 py-2 whitespace-nowrap">
+                        <span className="inline-flex items-center gap-1.5 px-2 py-0.5 rounded bg-[#161923] border border-[#262938] font-mono-num text-[10px] text-[#EFEAE0]">
+                          <span
+                            className="w-1.5 h-1.5 rounded-full"
+                            style={{ backgroundColor: orderHub.accentColor }}
+                          />
+                          <span>{order.hubName ?? orderHub.shortName}</span>
+                        </span>
+                      </td>
                       <td className="px-3 py-2">
                         <span
                           className={`px-1.5 py-0.5 rounded text-[10px] font-mono-num font-semibold ${

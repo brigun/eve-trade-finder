@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { CLIENT_ORIGIN } from '../config.js';
+import { CLIENT_ORIGIN, getHubById, isHubId, resolveHubId } from '../config.js';
 import { getDb } from '../db/database.js';
 import { getAllSettings } from '../services/settingsService.js';
 import {
@@ -94,12 +94,15 @@ authRouter.post('/logout', (_req, res) => {
   res.json({ disconnected: true });
 });
 
-authRouter.get('/orders', (_req, res) => {
+authRouter.get('/orders', (req, res) => {
   const session = getActiveSession();
   if (!session) {
     res.json({ connected: false, orders: [] });
     return;
   }
+
+  const rawHub = typeof req.query.hub === 'string' ? req.query.hub.trim().toLowerCase() : 'all';
+  const filterHubId = rawHub !== 'all' && isHubId(rawHub) ? rawHub : null;
 
   const db = getDb();
   const rows = db
@@ -112,12 +115,15 @@ authRouter.get('/orders', (_req, res) => {
         ms.best_ask
       FROM character_orders co
       LEFT JOIN item_types it ON it.type_id = co.type_id
-      LEFT JOIN market_summary ms ON ms.type_id = co.type_id
+      LEFT JOIN market_summary ms ON ms.hub_id = co.hub_id AND ms.type_id = co.type_id
       WHERE co.character_id = ?
+        AND (? IS NULL OR co.hub_id = ?)
       ORDER BY co.is_buy_order ASC, co.issued DESC
     `)
-    .all(session.character_id) as Array<{
+    .all(session.character_id, filterHubId, filterHubId) as Array<{
     order_id: number;
+    hub_id: string;
+    location_id: number | null;
     type_id: number;
     is_buy_order: number;
     price: number;
@@ -133,6 +139,8 @@ authRouter.get('/orders', (_req, res) => {
   }>;
 
   const orders = rows.map((row) => {
+    const hubId = resolveHubId(row.hub_id);
+    const hub = getHubById(hubId);
     const isBuy = row.is_buy_order === 1;
     const marketBestPrice = isBuy ? row.best_bid : row.best_ask;
 
@@ -162,6 +170,9 @@ authRouter.get('/orders', (_req, res) => {
 
     return {
       orderId: row.order_id,
+      hubId,
+      hubName: hub.shortName,
+      locationId: row.location_id,
       typeId: row.type_id,
       itemName: row.item_name ?? `Type #${row.type_id}`,
       rootGroupName: row.root_group_name ?? 'Uncategorized',

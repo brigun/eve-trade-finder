@@ -61,7 +61,7 @@ export function SettingsView({
         clearLlmApiKey
           ? 'Cleared saved LLM API key'
           : recalculateFromSkills
-            ? `Recalculated Jita fees: ${res.settings.brokerFeePct}% broker · ${res.settings.salesTaxPct}% tax`
+            ? `Recalculated station fees: ${res.settings.brokerFeePct}% broker · ${res.settings.salesTaxPct}% tax`
             : 'Saved settings to SQLite',
       );
     } catch (err) {
@@ -94,7 +94,7 @@ export function SettingsView({
             <div className="flex items-center gap-2">
               <Calculator className="w-4 h-4 text-[#9B7BFF]" />
               <h2 className="font-display text-sm font-semibold text-[#EFEAE0]">
-                Jita 4-4 Fee & Tax Parameters
+                Station Fee &amp; Tax Parameters
               </h2>
             </div>
             <span className="font-mono-num text-xs text-[#46E595]">
@@ -147,7 +147,7 @@ export function SettingsView({
             </label>
             <label className="flex flex-col gap-1">
               <span className="text-[10px] font-mono-num uppercase text-[#656A7C]">
-                Caldari Navy St.
+                NPC Corp St.
               </span>
               <input
                 type="number"
@@ -244,7 +244,7 @@ export function SettingsView({
                   onChange={(e) => setForm({ ...form, autoSyncEnabled: e.target.checked })}
                   className="accent-[#9B7BFF]"
                 />
-                <span>Enable Background Jita Auto-Sync</span>
+                <span>Enable Background Auto-Sync</span>
               </label>
 
               <label className="flex items-center gap-2 text-xs text-[#9CA0B0]">
@@ -259,6 +259,23 @@ export function SettingsView({
                   }
                   className="w-20 px-2 py-1 rounded bg-[#08090D] border border-[#262938] font-mono-num text-xs text-[#EFEAE0]"
                 />
+              </label>
+
+              <label className="flex items-center gap-2 text-xs text-[#9CA0B0]">
+                <span>Scope:</span>
+                <select
+                  value={form.autoSyncScope}
+                  onChange={(e) =>
+                    setForm({
+                      ...form,
+                      autoSyncScope: e.target.value === 'all' ? 'all' : 'active',
+                    })
+                  }
+                  className="px-2 py-1 rounded bg-[#08090D] border border-[#262938] font-mono-num text-xs text-[#EFEAE0]"
+                >
+                  <option value="active">Active Hub Only</option>
+                  <option value="all">All 6 Hubs</option>
+                </select>
               </label>
             </div>
 
@@ -618,7 +635,7 @@ export function SettingsView({
               {(syncStatus?.recentRuns.length ?? 0) === 0 && (
                 <tr>
                   <td colSpan={5} className="px-4 py-6 text-center text-[#656A7C]">
-                    No sync runs recorded yet. Click Sync Jita in the top bar to begin.
+                    No sync runs recorded yet. Click Sync in the top bar to begin.
                   </td>
                 </tr>
               )}

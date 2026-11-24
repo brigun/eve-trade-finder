@@ -1,6 +1,6 @@
 import { getDb } from '../db/database.js';
 import { getHistoryBackfillProgress, runIncrementalHistoryBackfill } from './historySync.js';
-import { getOrderSyncProgress, syncJitaOrders } from './orderSync.js';
+import { getOrderSyncProgress, syncAllHubsOrders, syncHubOrders } from './orderSync.js';
 import { getAllSettings } from './settingsService.js';
 
 let timer: ReturnType<typeof setInterval> | null = null;
@@ -54,7 +54,11 @@ async function tick(): Promise<void> {
   if (Date.now() >= nextAt && !getOrderSyncProgress().running) {
     lastOrderAttemptMs = Date.now();
     try {
-      await syncJitaOrders({ triggerHistoryBackfill: true });
+      if (settings.autoSyncScope === 'all') {
+        await syncAllHubsOrders({ triggerHistoryBackfill: true });
+      } else {
+        await syncHubOrders(settings.activeHub, { triggerHistoryBackfill: true });
+      }
       nextScheduledAtIso = new Date(Date.now() + intervalMs).toISOString();
     } catch (err) {
       console.error('[scheduler] order sync failed:', err);
@@ -65,11 +69,11 @@ async function tick(): Promise<void> {
   // If orders exist and no backfill is running, steadily warm remaining stale/missing histories
   if (!getOrderSyncProgress().running && !getHistoryBackfillProgress().running) {
     const db = getDb();
-    const summaryCount = db.prepare('SELECT COUNT(*) AS cnt FROM market_summary').get() as
-      | { cnt: number }
-      | undefined;
+    const summaryCount = db
+      .prepare('SELECT COUNT(*) AS cnt FROM market_summary WHERE hub_id = ?')
+      .get(settings.activeHub) as { cnt: number } | undefined;
     if ((summaryCount?.cnt ?? 0) > 0) {
-      void runIncrementalHistoryBackfill(60).catch(() => {});
+      void runIncrementalHistoryBackfill(60, settings.activeHub).catch(() => {});
     }
   }
 }

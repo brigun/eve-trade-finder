@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { AlertTriangle, RefreshCw, X } from 'lucide-react';
+import { ArbitrageView } from './components/ArbitrageView.tsx';
 import { AskNeonModal } from './components/AskNeonModal.tsx';
 import { FilterBar } from './components/FilterBar.tsx';
 import { ItemDrawer } from './components/ItemDrawer.tsx';
@@ -11,12 +12,14 @@ import { SettingsView } from './components/SettingsView.tsx';
 import { TopBar, type AppTab } from './components/TopBar.tsx';
 import { WatchlistView } from './components/WatchlistView.tsx';
 import { api } from './lib/api.ts';
+import { getHubMeta, isValidHubId } from './lib/hubs.ts';
 import type {
   FeeConfig,
   FilterFailure,
   FilterKey,
   FilterPreset,
   FilterState,
+  HubId,
   LookupMarketItem,
   MarketGroupTreeNode,
   MarketItem,
@@ -54,7 +57,22 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const params = new URLSearchParams(window.location.search);
     const t = params.get('tab');
-    return t === 'watchlist' || t === 'orders' || t === 'settings' ? t : 'scanner';
+    return t === 'arbitrage' || t === 'watchlist' || t === 'orders' || t === 'settings'
+      ? t
+      : 'scanner';
+  });
+
+  const [activeHub, setActiveHub] = useState<HubId>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const h = params.get('hub');
+    if (isValidHubId(h)) return h;
+    try {
+      const saved = window.localStorage.getItem('jitaMonolith.activeHub');
+      if (isValidHubId(saved)) return saved;
+    } catch {
+      // ignore storage failure
+    }
+    return 'jita';
   });
 
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS);
@@ -87,6 +105,7 @@ export default function App() {
   const [undercutCount, setUndercutCount] = useState(0);
 
   const [selectedTypeId, setSelectedTypeId] = useState<number | null>(null);
+  const [drawerHubId, setDrawerHubId] = useState<HubId | null>(null);
   const [askNeonOpen, setAskNeonOpen] = useState(false);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
   const [toast, setToast] = useState<string | null>(null);
@@ -99,10 +118,27 @@ export default function App() {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 4000);
   }, []);
 
+  const openItemDrawer = useCallback((typeId: number, hubOverride?: HubId) => {
+    setSelectedTypeId(typeId);
+    setDrawerHubId(hubOverride ?? null);
+  }, []);
+
+  const handleHubChange = useCallback((nextHub: HubId) => {
+    setActiveHub(nextHub);
+    setPage(1);
+    setHoveredLookupTypeId(null);
+    try {
+      window.localStorage.setItem('jitaMonolith.activeHub', nextHub);
+    } catch {
+      // ignore storage failure
+    }
+    void api.updateSettings({ activeHub: nextHub }).catch(() => {});
+  }, []);
+
   const loadMeta = useCallback(async () => {
     const [statsRes, groupsRes, presetsRes, syncRes, authRes] = await Promise.all([
-      api.getMarketStats(),
-      api.getMarketGroups(),
+      api.getMarketStats(activeHub),
+      api.getMarketGroups(activeHub),
       api.getPresets(),
       api.getSyncStatus(),
       api.getAuthStatus(),
@@ -115,19 +151,19 @@ export default function App() {
     setSsoStatus(authRes);
 
     if (authRes.connected) {
-      const charOrders = await api.getCharacterOrders();
+      const charOrders = await api.getCharacterOrders('all');
       setUndercutCount(
         charOrders.orders.filter((o) => o.status === 'UNDERCUT' || o.status === 'OUTBID').length,
       );
     } else {
       setUndercutCount(0);
     }
-  }, []);
+  }, [activeHub]);
 
   const loadItems = useCallback(async () => {
     setLoadingItems(true);
     try {
-      const res = await api.getMarketItems(filters, page, 50);
+      const res = await api.getMarketItems(filters, page, 50, activeHub);
       setItems(res.items);
       setFilteredOutMatches(res.filteredOutMatches ?? []);
       setFilteredOutTotal(res.filteredOutTotal ?? 0);
@@ -138,16 +174,17 @@ export default function App() {
       setFees(res.fees);
       setAvgRoiPct(res.summaryStats.avgRoiPct);
     } catch (err) {
-      notify(err instanceof Error ? err.message : 'Failed to load Jita market data');
+      notify(err instanceof Error ? err.message : `Failed to load ${getHubMeta(activeHub).name} market data`);
     } finally {
       setLoadingItems(false);
     }
-  }, [filters, page, notify]);
+  }, [filters, page, activeHub, notify]);
 
   const loadRecommended = useCallback(async () => {
     setLoadingRecommended(true);
     try {
       const res = await api.getRecommendedTrades({
+        hubId: activeHub,
         minRoiPct: filters.minRoiPct ?? 10,
         marketGroupId: filters.marketGroupId,
         marketGroupIds: filters.marketGroupIds,
@@ -158,7 +195,7 @@ export default function App() {
     } finally {
       setLoadingRecommended(false);
     }
-  }, [filters.minRoiPct, filters.marketGroupId, filters.marketGroupIds]);
+  }, [activeHub, filters.minRoiPct, filters.marketGroupId, filters.marketGroupIds]);
 
   useEffect(() => {
     void loadMeta();
@@ -215,8 +252,8 @@ export default function App() {
   const handleSyncOrders = async () => {
     try {
       setDismissedError(null);
-      await api.triggerOrderSync();
-      notify('Started Jita 4-4 order sync (persisting to SQLite)...');
+      await api.triggerOrderSync(activeHub);
+      notify(`Started ${getHubMeta(activeHub).name} order sync (persisting to SQLite)...`);
       const next = await api.getSyncStatus();
       setSyncStatus(next);
     } catch (err) {
@@ -224,10 +261,24 @@ export default function App() {
     }
   };
 
+  const handleSyncAllHubs = async () => {
+    try {
+      setDismissedError(null);
+      await api.triggerAllHubsSync();
+      notify('Started syncing all 6 trade hubs (Jita, Amarr, Dodixie, Rens, Hek, Amamake)...');
+      const next = await api.getSyncStatus();
+      setSyncStatus(next);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : 'Multi-hub sync failed to start');
+    }
+  };
+
   const handleBackfillHistory = async () => {
     try {
-      await api.triggerHistoryBackfill(150);
-      notify('Started 30-day market history backfill batch (150 priority items)...');
+      await api.triggerHistoryBackfill(150, activeHub);
+      notify(
+        `Started 30-day ${getHubMeta(activeHub).regionName} history backfill batch (150 items)...`,
+      );
       const next = await api.getSyncStatus();
       setSyncStatus(next);
     } catch (err) {
@@ -400,12 +451,13 @@ export default function App() {
   };
 
   const handleToggleWatchlist = async (item: MarketItem) => {
+    const hubMeta = getHubMeta(activeHub);
     if (item.isWatchlisted) {
-      await api.removeWatchlist(item.typeId);
-      notify(`Removed ${item.name} from Watchlist`);
+      await api.removeWatchlist(item.typeId, activeHub);
+      notify(`Removed ${item.name} from ${hubMeta.shortName} Watchlist`);
     } else {
-      await api.upsertWatchlist({ typeId: item.typeId });
-      notify(`Added ${item.name} to Watchlist`);
+      await api.upsertWatchlist({ typeId: item.typeId }, activeHub);
+      notify(`Added ${item.name} to ${hubMeta.shortName} Watchlist`);
     }
     await Promise.all([loadMeta(), loadItems()]);
   };
@@ -415,12 +467,15 @@ export default function App() {
       <TopBar
         activeTab={activeTab}
         onTabChange={setActiveTab}
+        activeHub={activeHub}
+        onHubChange={handleHubChange}
         stats={stats}
         fees={fees}
         syncStatus={syncStatus}
         ssoStatus={ssoStatus}
         undercutCount={undercutCount}
         onSyncOrders={() => void handleSyncOrders()}
+        onSyncAllHubs={() => void handleSyncAllHubs()}
         onBackfillHistory={() => void handleBackfillHistory()}
         onAskNeon={() => setAskNeonOpen(true)}
       />
@@ -470,6 +525,7 @@ export default function App() {
             })()}
 
             <KpiRibbon
+              activeHub={activeHub}
               stats={stats}
               matchedCount={total}
               avgRoiPct={avgRoiPct}
@@ -480,14 +536,16 @@ export default function App() {
             />
 
             <RecommendedTradeCard
+              activeHub={activeHub}
               recommended={recommended}
               loading={loadingRecommended}
-              onSelectItem={(item) => setSelectedTypeId(item.typeId)}
+              onSelectItem={(item) => openItemDrawer(item.typeId)}
               onAskNeon={() => setAskNeonOpen(true)}
               onNotify={notify}
             />
 
             <FilterBar
+              activeHub={activeHub}
               filters={filters}
               presets={presets}
               groupTree={groupTree}
@@ -504,6 +562,7 @@ export default function App() {
             />
 
             <MarketTable
+              activeHub={activeHub}
               items={items}
               total={total}
               page={page}
@@ -523,7 +582,7 @@ export default function App() {
               activeLookupTypeId={activeLookupFocus?.typeId ?? null}
               onSort={handleSort}
               onPageChange={setPage}
-              onSelectItem={(item) => setSelectedTypeId(item.typeId)}
+              onSelectItem={(item) => openItemDrawer(item.typeId)}
               onToggleWatchlist={(item) => void handleToggleWatchlist(item)}
               onSyncOrders={() => void handleSyncOrders()}
               onResetFilters={handleResetFilters}
@@ -533,9 +592,20 @@ export default function App() {
           </>
         )}
 
+        {activeTab === 'arbitrage' && (
+          <ArbitrageView
+            groupTree={groupTree}
+            syncStatus={syncStatus}
+            onSyncAllHubs={() => void handleSyncAllHubs()}
+            onSelectItem={(typeId, hubId) => openItemDrawer(typeId, hubId)}
+            onNotify={notify}
+          />
+        )}
+
         {activeTab === 'watchlist' && (
           <WatchlistView
-            onSelectTypeId={setSelectedTypeId}
+            activeHub={activeHub}
+            onSelectTypeId={(typeId) => openItemDrawer(typeId)}
             onWatchlistChanged={() => void Promise.all([loadMeta(), loadItems()])}
             onNotify={notify}
           />
@@ -543,9 +613,10 @@ export default function App() {
 
         {activeTab === 'orders' && (
           <MyOrdersView
+            activeHub={activeHub}
             ssoStatus={ssoStatus}
             onRefreshAuth={loadMeta}
-            onSelectTypeId={setSelectedTypeId}
+            onSelectTypeId={(typeId, hubId) => openItemDrawer(typeId, hubId)}
             onNotify={notify}
           />
         )}
@@ -599,18 +670,24 @@ export default function App() {
 
       <ItemDrawer
         typeId={selectedTypeId}
-        onClose={() => setSelectedTypeId(null)}
+        hubId={drawerHubId ?? activeHub}
+        onHubChange={(nextHub) => setDrawerHubId(nextHub)}
+        onClose={() => {
+          setSelectedTypeId(null);
+          setDrawerHubId(null);
+        }}
         onWatchlistChanged={() => void Promise.all([loadMeta(), loadItems()])}
         onNotify={notify}
       />
 
       <AskNeonModal
         open={askNeonOpen}
+        activeHub={activeHub}
         minRoiPct={filters.minRoiPct}
         marketGroupId={filters.marketGroupId}
         marketGroupIds={filters.marketGroupIds}
         onClose={() => setAskNeonOpen(false)}
-        onSelectTypeId={setSelectedTypeId}
+        onSelectTypeId={(typeId) => openItemDrawer(typeId)}
         onOpenSettings={() => setActiveTab('settings')}
         onNotify={notify}
       />

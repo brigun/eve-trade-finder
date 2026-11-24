@@ -1,5 +1,11 @@
 import { Router } from 'express';
-import { EXCLUDED_DEFAULT_GROUPS } from '../config.js';
+import {
+  EXCLUDED_DEFAULT_GROUPS,
+  getHubById,
+  resolveHubId,
+  TRADE_HUBS,
+  type HubId,
+} from '../config.js';
 import { getDb } from '../db/database.js';
 import { EsiHttpError } from '../services/esiClient.js';
 import { getItemGameInfo } from '../services/gameInfoService.js';
@@ -10,6 +16,7 @@ import {
   type FilterFailure,
   type MarketFilterCriteria,
 } from '../services/marketFilter.js';
+import { getHubSyncFreshness } from '../services/orderSync.js';
 import { getFeeConfig } from '../services/settingsService.js';
 import {
   computeItemMetrics,
@@ -66,8 +73,12 @@ export function getDescendantMarketGroupIds(
   return result;
 }
 
-export function getGroupScopeLabel(db: ReturnType<typeof getDb>, targetGroupIds: number[]): string {
-  if (targetGroupIds.length === 0) return 'Overall Jita 4-4';
+export function getGroupScopeLabel(
+  db: ReturnType<typeof getDb>,
+  targetGroupIds: number[],
+  hubId: HubId = 'jita',
+): string {
+  if (targetGroupIds.length === 0) return `Overall ${getHubById(hubId).name}`;
   const stmt = db.prepare('SELECT name FROM market_groups WHERE market_group_id = ?');
   const names = targetGroupIds
     .map((id) => (stmt.get(id) as { name?: string } | undefined)?.name)
@@ -75,7 +86,10 @@ export function getGroupScopeLabel(db: ReturnType<typeof getDb>, targetGroupIds:
   return names.length > 0 ? names.join(' + ') : 'Selected Segment';
 }
 
-function buildMarketGroupTree(db: ReturnType<typeof getDb>): MarketGroupTreeNode[] {
+function buildMarketGroupTree(
+  db: ReturnType<typeof getDb>,
+  hubId: HubId = 'jita',
+): MarketGroupTreeNode[] {
   const groupRows = db
     .prepare('SELECT market_group_id, parent_group_id, name FROM market_groups')
     .all() as Array<{ market_group_id: number; parent_group_id: number | null; name: string }>;
@@ -85,12 +99,13 @@ function buildMarketGroupTree(db: ReturnType<typeof getDb>): MarketGroupTreeNode
       SELECT it.market_group_id, COUNT(*) AS cnt
       FROM market_summary ms
       JOIN item_types it ON it.type_id = ms.type_id
-      WHERE ms.best_bid IS NOT NULL AND ms.best_ask IS NOT NULL
+      WHERE ms.hub_id = ?
+        AND ms.best_bid IS NOT NULL AND ms.best_ask IS NOT NULL
         AND ms.best_bid > 0 AND ms.best_ask > 0
         AND it.market_group_id IS NOT NULL
       GROUP BY it.market_group_id
     `)
-    .all() as Array<{ market_group_id: number; cnt: number }>;
+    .all(hubId) as Array<{ market_group_id: number; cnt: number }>;
 
   const directCounts = new Map<number, number>();
   for (const r of countRows) {
@@ -339,8 +354,9 @@ export function buildItemDto(row: RawScannerRow, fees: ReturnType<typeof getFeeC
   };
 }
 
-export function loadScannerRows(): RawScannerRow[] {
+export function loadScannerRows(hubId: HubId = 'jita'): RawScannerRow[] {
   const db = getDb();
+  const hub = getHubById(hubId);
   return db
     .prepare(`
       SELECT
@@ -364,14 +380,16 @@ export function loadScannerRows(): RawScannerRow[] {
         COALESCE(co.cnt, 0) AS char_order_count
       FROM market_summary ms
       LEFT JOIN item_types it ON it.type_id = ms.type_id
-      LEFT JOIN history_metrics hm ON hm.type_id = ms.type_id
-      LEFT JOIN watchlist w ON w.type_id = ms.type_id
+      LEFT JOIN history_metrics hm ON hm.region_id = ? AND hm.type_id = ms.type_id
+      LEFT JOIN watchlist w ON w.hub_id = ms.hub_id AND w.type_id = ms.type_id
       LEFT JOIN (
-        SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+        SELECT type_id, COUNT(*) AS cnt FROM character_orders WHERE hub_id = ? GROUP BY type_id
       ) co ON co.type_id = ms.type_id
-      WHERE ms.best_bid IS NOT NULL AND ms.best_ask IS NOT NULL AND ms.best_bid > 0 AND ms.best_ask > 0
+      WHERE ms.hub_id = ?
+        AND ms.best_bid IS NOT NULL AND ms.best_ask IS NOT NULL
+        AND ms.best_bid > 0 AND ms.best_ask > 0
     `)
-    .all() as unknown as RawScannerRow[];
+    .all(hub.regionId, hub.id, hub.id) as unknown as RawScannerRow[];
 }
 
 export interface LookupMarketItemDto extends MarketItemDto {
@@ -382,7 +400,12 @@ function escapeLikePattern(q: string): string {
   return `%${q.replace(/[\\%_]/g, '\\$&')}%`;
 }
 
-function loadOneSidedSearchRows(db: ReturnType<typeof getDb>, q: string): RawScannerRow[] {
+function loadOneSidedSearchRows(
+  db: ReturnType<typeof getDb>,
+  q: string,
+  hubId: HubId = 'jita',
+): RawScannerRow[] {
+  const hub = getHubById(hubId);
   const likePattern = escapeLikePattern(q);
   const exactId = /^\d+$/.test(q) ? Number.parseInt(q, 10) : -1;
   return db
@@ -408,19 +431,25 @@ function loadOneSidedSearchRows(db: ReturnType<typeof getDb>, q: string): RawSca
         COALESCE(co.cnt, 0) AS char_order_count
       FROM market_summary ms
       LEFT JOIN item_types it ON it.type_id = ms.type_id
-      LEFT JOIN history_metrics hm ON hm.type_id = ms.type_id
-      LEFT JOIN watchlist w ON w.type_id = ms.type_id
+      LEFT JOIN history_metrics hm ON hm.region_id = ? AND hm.type_id = ms.type_id
+      LEFT JOIN watchlist w ON w.hub_id = ms.hub_id AND w.type_id = ms.type_id
       LEFT JOIN (
-        SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+        SELECT type_id, COUNT(*) AS cnt FROM character_orders WHERE hub_id = ? GROUP BY type_id
       ) co ON co.type_id = ms.type_id
-      WHERE (ms.best_bid IS NULL OR ms.best_bid <= 0 OR ms.best_ask IS NULL OR ms.best_ask <= 0)
+      WHERE ms.hub_id = ?
+        AND (ms.best_bid IS NULL OR ms.best_bid <= 0 OR ms.best_ask IS NULL OR ms.best_ask <= 0)
         AND (LOWER(COALESCE(it.name, '')) LIKE ? ESCAPE '\\' OR ms.type_id = ?)
       LIMIT 40
     `)
-    .all(likePattern, exactId) as unknown as RawScannerRow[];
+    .all(hub.regionId, hub.id, hub.id, likePattern, exactId) as unknown as RawScannerRow[];
 }
 
-function loadSdeOnlySearchRows(db: ReturnType<typeof getDb>, q: string): RawScannerRow[] {
+function loadSdeOnlySearchRows(
+  db: ReturnType<typeof getDb>,
+  q: string,
+  hubId: HubId = 'jita',
+): RawScannerRow[] {
+  const hub = getHubById(hubId);
   const likePattern = escapeLikePattern(q);
   const exactId = /^\d+$/.test(q) ? Number.parseInt(q, 10) : -1;
   return db
@@ -458,11 +487,11 @@ function loadSdeOnlySearchRows(db: ReturnType<typeof getDb>, q: string): RawScan
         CASE WHEN w.type_id IS NOT NULL THEN 1 ELSE 0 END AS is_watchlisted,
         COALESCE(co.cnt, 0) AS char_order_count
       FROM item_types it
-      LEFT JOIN market_summary ms ON ms.type_id = it.type_id
-      LEFT JOIN history_metrics hm ON hm.type_id = it.type_id
-      LEFT JOIN watchlist w ON w.type_id = it.type_id
+      LEFT JOIN market_summary ms ON ms.hub_id = ? AND ms.type_id = it.type_id
+      LEFT JOIN history_metrics hm ON hm.region_id = ? AND hm.type_id = it.type_id
+      LEFT JOIN watchlist w ON w.hub_id = ? AND w.type_id = it.type_id
       LEFT JOIN (
-        SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+        SELECT type_id, COUNT(*) AS cnt FROM character_orders WHERE hub_id = ? GROUP BY type_id
       ) co ON co.type_id = it.type_id
       WHERE ms.type_id IS NULL
         AND it.published = 1
@@ -470,13 +499,21 @@ function loadSdeOnlySearchRows(db: ReturnType<typeof getDb>, q: string): RawScan
         AND (LOWER(it.name) LIKE ? ESCAPE '\\' OR it.type_id = ?)
       LIMIT 60
     `)
-    .all(likePattern, exactId) as unknown as RawScannerRow[];
+    .all(hub.id, hub.regionId, hub.id, hub.id, likePattern, exactId) as unknown as RawScannerRow[];
 }
+
+marketRouter.get('/hubs', (_req, res) => {
+  res.json({
+    hubs: TRADE_HUBS,
+    freshness: getHubSyncFreshness(),
+  });
+});
 
 marketRouter.get('/items', (req, res) => {
   const db = getDb();
   const fees = getFeeConfig();
-  const rows = loadScannerRows();
+  const hubId = resolveHubId(req.query.hub);
+  const rows = loadScannerRows(hubId);
 
   const q = typeof req.query.q === 'string' ? req.query.q.trim().toLowerCase() : '';
   const minRoiPct = parseOptionalNumber(req.query.minRoiPct);
@@ -560,7 +597,7 @@ marketRouter.get('/items', (req, res) => {
   let filteredOutTotal = 0;
 
   if (q) {
-    const oneSidedRows = loadOneSidedSearchRows(db, q);
+    const oneSidedRows = loadOneSidedSearchRows(db, q, hubId);
     for (const row of oneSidedRows) {
       if (seenTypeIds.has(row.type_id)) continue;
       seenTypeIds.add(row.type_id);
@@ -575,7 +612,7 @@ marketRouter.get('/items', (req, res) => {
     }
 
     if (matched.length === 0 && filteredOutRaw.length < 15) {
-      const sdeOnlyRows = loadSdeOnlySearchRows(db, q);
+      const sdeOnlyRows = loadSdeOnlySearchRows(db, q, hubId);
       for (const row of sdeOnlyRows) {
         if (seenTypeIds.has(row.type_id)) continue;
         seenTypeIds.add(row.type_id);
@@ -678,27 +715,36 @@ marketRouter.get('/items', (req, res) => {
   });
 });
 
-marketRouter.get('/stats', (_req, res) => {
+marketRouter.get('/stats', (req, res) => {
   const fees = getFeeConfig();
-  const rows = loadScannerRows();
+  const hub = getHubById(resolveHubId(req.query.hub));
+  const rows = loadScannerRows(hub.id);
   const db = getDb();
 
-  const totalJitaRow = db.prepare('SELECT COUNT(*) AS cnt FROM market_summary').get() as {
+  const totalJitaRow = db
+    .prepare('SELECT COUNT(*) AS cnt FROM market_summary WHERE hub_id = ?')
+    .get(hub.id) as {
     cnt: number;
   };
-  const totalOrdersRow = db.prepare('SELECT COUNT(*) AS cnt FROM jita_orders').get() as {
+  const totalOrdersRow = db
+    .prepare('SELECT COUNT(*) AS cnt FROM hub_orders WHERE hub_id = ?')
+    .get(hub.id) as {
     cnt: number;
   };
   const historyRow = db
-    .prepare("SELECT COUNT(*) AS cnt FROM history_fetch_log WHERE status IN ('ok', 'empty')")
-    .get() as { cnt: number };
-  const watchlistRow = db.prepare('SELECT COUNT(*) AS cnt FROM watchlist').get() as { cnt: number };
+    .prepare(
+      "SELECT COUNT(*) AS cnt FROM history_fetch_log WHERE region_id = ? AND status IN ('ok', 'empty')",
+    )
+    .get(hub.regionId) as { cnt: number };
+  const watchlistRow = db
+    .prepare('SELECT COUNT(*) AS cnt FROM watchlist WHERE hub_id = ?')
+    .get(hub.id) as { cnt: number };
   const sdeRow = db.prepare('SELECT COUNT(*) AS cnt FROM item_types').get() as { cnt: number };
   const lastOrderSync = db
     .prepare(
-      "SELECT finished_at FROM sync_runs WHERE kind = 'orders' AND status = 'completed' ORDER BY id DESC LIMIT 1",
+      "SELECT finished_at FROM sync_runs WHERE COALESCE(hub_id, 'jita') = ? AND kind = 'orders' AND status = 'completed' ORDER BY id DESC LIMIT 1",
     )
-    .get() as { finished_at: string | null } | undefined;
+    .get(hub.id) as { finished_at: string | null } | undefined;
 
   let trendingItemsCount = 0;
   for (const row of rows) {
@@ -710,6 +756,8 @@ marketRouter.get('/stats', (_req, res) => {
   const historyCoveredItems = rows.filter((r) => r.history_updated_at !== null).length;
 
   res.json({
+    hubId: hub.id,
+    hubName: hub.name,
     totalJitaItems: totalJitaRow.cnt,
     twoSidedItems,
     totalJitaOrders: totalOrdersRow.cnt,
@@ -725,8 +773,9 @@ marketRouter.get('/stats', (_req, res) => {
   });
 });
 
-marketRouter.get('/groups', (_req, res) => {
+marketRouter.get('/groups', (req, res) => {
   const db = getDb();
+  const hubId = resolveHubId(req.query.hub);
   const groups = db
     .prepare(`
       SELECT
@@ -734,20 +783,22 @@ marketRouter.get('/groups', (_req, res) => {
         COUNT(*) AS itemCount
       FROM market_summary ms
       LEFT JOIN item_types it ON it.type_id = ms.type_id
-      WHERE ms.best_bid IS NOT NULL AND ms.best_ask IS NOT NULL
+      WHERE ms.hub_id = ?
+        AND ms.best_bid IS NOT NULL AND ms.best_ask IS NOT NULL
       GROUP BY COALESCE(it.root_group_name, 'Uncategorized')
       ORDER BY itemCount DESC, name ASC
     `)
-    .all() as Array<{ name: string; itemCount: number }>;
+    .all(hubId) as Array<{ name: string; itemCount: number }>;
 
-  const tree = buildMarketGroupTree(db);
+  const tree = buildMarketGroupTree(db, hubId);
   res.json({ groups: groups.map((g) => ({ ...g })), tree });
 });
 
 marketRouter.get('/recommended', (req, res) => {
   const db = getDb();
   const fees = getFeeConfig();
-  const rows = loadScannerRows();
+  const hubId = resolveHubId(req.query.hub);
+  const rows = loadScannerRows(hubId);
 
   const minRoiPct = parseOptionalNumber(req.query.minRoiPct) ?? 10;
   const limit = Math.min(5, Math.max(1, Math.floor(parseOptionalNumber(req.query.limit) ?? 3)));
@@ -805,7 +856,7 @@ marketRouter.get('/recommended', (req, res) => {
   res.json({
     top: selected[0] ?? null,
     runnersUp: selected.slice(1),
-    scopeLabel: getGroupScopeLabel(db, targetGroupIds),
+    scopeLabel: getGroupScopeLabel(db, targetGroupIds, hubId),
     minRoiPct,
     evaluatedCount: candidates.length,
     fallbackUsed,
@@ -843,6 +894,7 @@ marketRouter.get('/items/:typeId', (req, res) => {
 
   const db = getDb();
   const fees = getFeeConfig();
+  const hub = getHubById(resolveHubId(req.query.hub));
 
   let row = db
     .prepare(`
@@ -867,14 +919,14 @@ marketRouter.get('/items/:typeId', (req, res) => {
         COALESCE(co.cnt, 0) AS char_order_count
       FROM market_summary ms
       LEFT JOIN item_types it ON it.type_id = ms.type_id
-      LEFT JOIN history_metrics hm ON hm.type_id = ms.type_id
-      LEFT JOIN watchlist w ON w.type_id = ms.type_id
+      LEFT JOIN history_metrics hm ON hm.region_id = ? AND hm.type_id = ms.type_id
+      LEFT JOIN watchlist w ON w.hub_id = ms.hub_id AND w.type_id = ms.type_id
       LEFT JOIN (
-        SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+        SELECT type_id, COUNT(*) AS cnt FROM character_orders WHERE hub_id = ? GROUP BY type_id
       ) co ON co.type_id = ms.type_id
-      WHERE ms.type_id = ?
+      WHERE ms.hub_id = ? AND ms.type_id = ?
     `)
-    .get(typeId) as RawScannerRow | undefined;
+    .get(hub.regionId, hub.id, hub.id, typeId) as RawScannerRow | undefined;
 
   if (!row) {
     row = db
@@ -912,18 +964,18 @@ marketRouter.get('/items/:typeId', (req, res) => {
           CASE WHEN w.type_id IS NOT NULL THEN 1 ELSE 0 END AS is_watchlisted,
           COALESCE(co.cnt, 0) AS char_order_count
         FROM item_types it
-        LEFT JOIN history_metrics hm ON hm.type_id = it.type_id
-        LEFT JOIN watchlist w ON w.type_id = it.type_id
+        LEFT JOIN history_metrics hm ON hm.region_id = ? AND hm.type_id = it.type_id
+        LEFT JOIN watchlist w ON w.hub_id = ? AND w.type_id = it.type_id
         LEFT JOIN (
-          SELECT type_id, COUNT(*) AS cnt FROM character_orders GROUP BY type_id
+          SELECT type_id, COUNT(*) AS cnt FROM character_orders WHERE hub_id = ? GROUP BY type_id
         ) co ON co.type_id = it.type_id
         WHERE it.type_id = ?
       `)
-      .get(typeId) as RawScannerRow | undefined;
+      .get(hub.regionId, hub.id, hub.id, typeId) as RawScannerRow | undefined;
   }
 
   if (!row) {
-    res.status(404).json({ error: 'Item not found in local Jita 4-4 or SDE catalog.' });
+    res.status(404).json({ error: `Item not found in ${hub.name} or SDE catalog.` });
     return;
   }
 
@@ -948,47 +1000,51 @@ marketRouter.get('/items/:typeId', (req, res) => {
 
   const sellOrders = db
     .prepare(
-      'SELECT * FROM jita_orders WHERE type_id = ? AND is_buy_order = 0 ORDER BY price ASC LIMIT 120',
+      'SELECT * FROM hub_orders WHERE hub_id = ? AND type_id = ? AND is_buy_order = 0 ORDER BY price ASC LIMIT 120',
     )
-    .all(typeId)
+    .all(hub.id, typeId)
     .map((o) => ({ ...o }));
 
   const buyOrders = db
     .prepare(
-      'SELECT * FROM jita_orders WHERE type_id = ? AND is_buy_order = 1 ORDER BY price DESC LIMIT 120',
+      'SELECT * FROM hub_orders WHERE hub_id = ? AND type_id = ? AND is_buy_order = 1 ORDER BY price DESC LIMIT 120',
     )
-    .all(typeId)
+    .all(hub.id, typeId)
     .map((o) => ({ ...o }));
 
   const history = db
     .prepare(
-      'SELECT date, average, highest, lowest, order_count, volume FROM market_history WHERE type_id = ? ORDER BY date ASC',
+      'SELECT date, average, highest, lowest, order_count, volume FROM market_history WHERE region_id = ? AND type_id = ? ORDER BY date ASC',
     )
-    .all(typeId)
+    .all(hub.regionId, typeId)
     .map((h) => ({ ...h }));
 
   const fetchLog = db
-    .prepare('SELECT fetched_at, status, days_count FROM history_fetch_log WHERE type_id = ?')
-    .get(typeId) as { fetched_at: string; status: string; days_count: number } | undefined;
+    .prepare('SELECT fetched_at, status, days_count FROM history_fetch_log WHERE region_id = ? AND type_id = ?')
+    .get(hub.regionId, typeId) as { fetched_at: string; status: string; days_count: number } | undefined;
 
   const snapshots = db
     .prepare(
-      'SELECT captured_at, best_bid, best_ask, buy_order_count, sell_order_count, recent_updates_1h FROM market_snapshots WHERE type_id = ? ORDER BY captured_at DESC LIMIT 48',
+      'SELECT captured_at, best_bid, best_ask, buy_order_count, sell_order_count, recent_updates_1h FROM market_snapshots WHERE hub_id = ? AND type_id = ? ORDER BY captured_at DESC LIMIT 48',
     )
-    .all(typeId)
+    .all(hub.id, typeId)
     .map((s) => ({ ...s }))
     .reverse();
 
-  const watchlistEntry = db.prepare('SELECT * FROM watchlist WHERE type_id = ?').get(typeId) as
-    | Record<string, unknown>
-    | undefined;
+  const watchlistEntry = db
+    .prepare('SELECT * FROM watchlist WHERE hub_id = ? AND type_id = ?')
+    .get(hub.id, typeId) as Record<string, unknown> | undefined;
 
   const charOrders = db
-    .prepare('SELECT order_id, is_buy_order, price, volume_remain, volume_total FROM character_orders WHERE type_id = ?')
-    .all(typeId)
+    .prepare(
+      'SELECT order_id, is_buy_order, price, volume_remain, volume_total FROM character_orders WHERE hub_id = ? AND type_id = ?',
+    )
+    .all(hub.id, typeId)
     .map((o) => ({ ...o }));
 
   res.json({
+    hubId: hub.id,
+    hubName: hub.name,
     item: buildItemDto(row, fees),
     groupPath,
     fees,

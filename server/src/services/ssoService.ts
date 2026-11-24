@@ -4,7 +4,9 @@ import {
   EVE_SSO_JWKS_URL,
   EVE_SSO_SCOPES,
   EVE_SSO_TOKEN_URL,
-  JITA_STATION_ID,
+  getHubById,
+  matchStationToHubId,
+  type HubId,
 } from '../config.js';
 import { getDb, withTransaction } from '../db/database.js';
 import { esiFetchJson } from './esiClient.js';
@@ -303,6 +305,7 @@ export async function syncCharacterData(): Promise<{
         order_id: number;
         type_id: number;
         location_id: number;
+        region_id?: number;
         is_buy_order?: boolean;
         price: number;
         volume_remain: number;
@@ -345,21 +348,60 @@ export async function syncCharacterData(): Promise<{
     salesTaxPct: fees.salesTaxPct,
   });
 
-  const jitaCharOrders = (ordersRes.data ?? []).filter((o) => o.location_id === JITA_STATION_ID);
   const db = getDb();
+  const amamakeHub = getHubById('amamake');
+  const amamakeStationStmt = db.prepare(
+    "SELECT 1 FROM hub_orders WHERE hub_id = 'amamake' AND location_id = ? LIMIT 1",
+  );
+  const stationHubCache = new Map<number, HubId | null>();
+
+  const trackedOrders: Array<{
+    order: NonNullable<typeof ordersRes.data>[number];
+    hubId: HubId;
+  }> = [];
+
+  for (const o of ordersRes.data ?? []) {
+    let hubId = matchStationToHubId(o.location_id);
+    if (!hubId && o.region_id === amamakeHub.regionId && o.location_id < 1_000_000_000) {
+      if (stationHubCache.has(o.location_id)) {
+        hubId = stationHubCache.get(o.location_id) ?? null;
+      } else if (amamakeStationStmt.get(o.location_id)) {
+        hubId = 'amamake';
+        stationHubCache.set(o.location_id, 'amamake');
+      } else {
+        try {
+          const stRes = await esiFetchJson<{ system_id?: number }>(
+            `/universe/stations/${o.location_id}/`,
+            { allowNotFound: true, retries: 1 },
+          );
+          hubId = stRes.data?.system_id === amamakeHub.systemId ? 'amamake' : null;
+        } catch {
+          hubId = null;
+        }
+        stationHubCache.set(o.location_id, hubId);
+      }
+    }
+    if (hubId) {
+      trackedOrders.push({ order: o, hubId });
+    }
+  }
+
   const nowIso = new Date().toISOString();
 
   withTransaction(db, () => {
     db.prepare('DELETE FROM character_orders WHERE character_id = ?').run(charId);
     const insert = db.prepare(`
       INSERT INTO character_orders (
-        order_id, character_id, type_id, is_buy_order, price, volume_remain, volume_total, issued, escrow, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        order_id, character_id, hub_id, location_id, type_id, is_buy_order,
+        price, volume_remain, volume_total, issued, escrow, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    for (const o of jitaCharOrders) {
+    for (const { order: o, hubId } of trackedOrders) {
       insert.run(
         o.order_id,
         charId,
+        hubId,
+        o.location_id,
         o.type_id,
         o.is_buy_order ? 1 : 0,
         o.price,
@@ -379,6 +421,6 @@ export async function syncCharacterData(): Promise<{
     brokerRelationsLevel,
     factionStanding,
     corpStanding,
-    jitaOrdersCount: jitaCharOrders.length,
+    jitaOrdersCount: trackedOrders.length,
   };
 }

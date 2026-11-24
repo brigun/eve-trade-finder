@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { isHubId } from '../config.js';
 import { refreshSchedulerSchedule } from '../services/scheduler.js';
 import {
   getAllSettings,
@@ -42,6 +43,12 @@ settingsRouter.put('/', (req, res) => {
   if (typeof body.autoSyncEnabled === 'boolean') patch.autoSyncEnabled = body.autoSyncEnabled;
   if (typeof body.autoSyncIntervalMin === 'number') {
     patch.autoSyncIntervalMin = Math.max(5, Math.min(180, Math.round(body.autoSyncIntervalMin)));
+  }
+  if (body.autoSyncScope === 'active' || body.autoSyncScope === 'all') {
+    patch.autoSyncScope = body.autoSyncScope;
+  }
+  if (isHubId(body.activeHub)) {
+    patch.activeHub = body.activeHub;
   }
   if (typeof body.captureSharePct === 'number') {
     patch.captureSharePct = Math.max(1, Math.min(100, body.captureSharePct));

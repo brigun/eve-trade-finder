@@ -17,7 +17,9 @@ import {
   formatRelativeTime,
   parseIskShorthand,
 } from '../lib/format.ts';
+import { getHubMeta } from '../lib/hubs.ts';
 import type {
+  HubId,
   LlmModelOption,
   LlmThinkingLevel,
   NeonAdvisorStatus,
@@ -28,6 +30,7 @@ import { ItemIcon } from './ItemIcon.tsx';
 
 interface AskNeonModalProps {
   open: boolean;
+  activeHub: HubId;
   minRoiPct: number | null;
   marketGroupId: number | null;
   marketGroupIds: number[];
@@ -49,6 +52,7 @@ const SESSION_STYLES: Array<{
 
 export function AskNeonModal({
   open,
+  activeHub,
   minRoiPct,
   marketGroupId,
   marketGroupIds,
@@ -57,6 +61,7 @@ export function AskNeonModal({
   onOpenSettings,
   onNotify,
 }: AskNeonModalProps) {
+  const hubMeta = getHubMeta(activeHub);
   const [status, setStatus] = useState<NeonAdvisorStatus | null>(null);
   const [models, setModels] = useState<LlmModelOption[]>([]);
   const [modelsSource, setModelsSource] = useState<'live' | 'fallback'>('fallback');
@@ -146,6 +151,7 @@ export function AskNeonModal({
     try {
       const budgetIsk = parseIskShorthand(budgetText);
       const res = await api.askNeon({
+        hubId: activeHub,
         budgetIsk,
         sessionStyle,
         userNote: userNote.trim(),
@@ -252,7 +258,7 @@ export function AskNeonModal({
                 )}
               </div>
               <p className="text-[11px] text-[#9CA0B0] truncate">
-                Top 3 grounded Jita 4-4 trades scored by price, book depth, volume, and active traders
+                Top 3 grounded {hubMeta.name} trades scored by price, book depth, volume, and active traders
               </p>
             </div>
           </div>
@@ -583,7 +589,7 @@ export function AskNeonModal({
             <div className="py-10 text-center space-y-2 border border-dashed border-[#262938] rounded-md">
               <Sparkles className="w-6 h-6 text-[#9B7BFF] mx-auto" />
               <p className="text-xs text-[#EFEAE0] font-medium">
-                Ready to analyze Jita 4-4 opportunities for your session
+                Ready to analyze {hubMeta.name} opportunities for your session
               </p>
               <p className="text-[11px] text-[#656A7C] max-w-md mx-auto">
                 Choose a session style (and optional ISK budget), then click{' '}

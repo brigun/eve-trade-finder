@@ -1,4 +1,4 @@
-import { THE_FORGE_REGION_ID } from '../config.js';
+import { getHubById, THE_FORGE_REGION_ID, type HubId } from '../config.js';
 import { getDb, withTransaction } from '../db/database.js';
 import { esiFetchJson, getEsiRateState, sleep } from './esiClient.js';
 
@@ -26,7 +26,7 @@ const backfillState: HistoryBackfillProgress = {
 };
 
 let activeBackfillPromise: Promise<{ fetched: number; total: number }> | null = null;
-const inFlightTypeFetches = new Map<number, Promise<EsiHistoryEntry[]>>();
+const inFlightTypeFetches = new Map<string, Promise<EsiHistoryEntry[]>>();
 
 export function getHistoryBackfillProgress(): HistoryBackfillProgress {
   return { ...backfillState };
@@ -36,23 +36,28 @@ function parseDateMs(dateStr: string): number {
   return Date.parse(`${dateStr}T00:00:00Z`);
 }
 
-export async function fetchHistoryForType(typeId: number, force = false): Promise<EsiHistoryEntry[]> {
-  const existingPromise = inFlightTypeFetches.get(typeId);
+export async function fetchHistoryForType(
+  typeId: number,
+  force = false,
+  regionId = THE_FORGE_REGION_ID,
+): Promise<EsiHistoryEntry[]> {
+  const inflightKey = `${regionId}:${typeId}`;
+  const existingPromise = inFlightTypeFetches.get(inflightKey);
   if (existingPromise) return existingPromise;
 
   const db = getDb();
   if (!force) {
     const log = db
-      .prepare('SELECT fetched_at, status FROM history_fetch_log WHERE type_id = ?')
-      .get(typeId) as { fetched_at: string; status: string } | undefined;
+      .prepare('SELECT fetched_at, status FROM history_fetch_log WHERE region_id = ? AND type_id = ?')
+      .get(regionId, typeId) as { fetched_at: string; status: string } | undefined;
     if (log) {
       const ageMs = Date.now() - Date.parse(log.fetched_at);
       if (ageMs < 23 * 3600_000) {
         return db
           .prepare(
-            'SELECT date, average, highest, lowest, order_count, volume FROM market_history WHERE type_id = ? ORDER BY date ASC',
+            'SELECT date, average, highest, lowest, order_count, volume FROM market_history WHERE region_id = ? AND type_id = ? ORDER BY date ASC',
           )
-          .all(typeId) as unknown as EsiHistoryEntry[];
+          .all(regionId, typeId) as unknown as EsiHistoryEntry[];
       }
     }
   }
@@ -60,7 +65,7 @@ export async function fetchHistoryForType(typeId: number, force = false): Promis
   const work = (async () => {
     try {
       const { data, status } = await esiFetchJson<EsiHistoryEntry[]>(
-        `/markets/${THE_FORGE_REGION_ID}/history/?type_id=${typeId}`,
+        `/markets/${regionId}/history/?type_id=${typeId}`,
         { allowNotFound: true, retries: 2 },
       );
 
@@ -108,14 +113,18 @@ export async function fetchHistoryForType(typeId: number, force = false): Promis
       const fetchedAt = now.toISOString();
 
       withTransaction(db, () => {
-        db.prepare('DELETE FROM market_history WHERE type_id = ?').run(typeId);
+        db.prepare('DELETE FROM market_history WHERE region_id = ? AND type_id = ?').run(
+          regionId,
+          typeId,
+        );
 
         const insertHist = db.prepare(`
-          INSERT INTO market_history (type_id, date, average, highest, lowest, order_count, volume)
-          VALUES (?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO market_history (region_id, type_id, date, average, highest, lowest, order_count, volume)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         `);
         for (const e of recentEntries) {
           insertHist.run(
+            regionId,
             typeId,
             e.date,
             e.average,
@@ -128,10 +137,10 @@ export async function fetchHistoryForType(typeId: number, force = false): Promis
 
         db.prepare(`
           INSERT INTO history_metrics (
-            type_id, daily_volume_7d, daily_volume_30d, daily_isk_volume_7d, daily_isk_volume_30d,
+            region_id, type_id, daily_volume_7d, daily_volume_30d, daily_isk_volume_7d, daily_isk_volume_30d,
             avg_price_7d, avg_price_30d, volume_trend_pct, price_trend_pct, active_days_30d, updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(type_id) DO UPDATE SET
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ON CONFLICT(region_id, type_id) DO UPDATE SET
             daily_volume_7d = excluded.daily_volume_7d,
             daily_volume_30d = excluded.daily_volume_30d,
             daily_isk_volume_7d = excluded.daily_isk_volume_7d,
@@ -143,6 +152,7 @@ export async function fetchHistoryForType(typeId: number, force = false): Promis
             active_days_30d = excluded.active_days_30d,
             updated_at = excluded.updated_at
         `).run(
+          regionId,
           typeId,
           dailyVol7d,
           dailyVol30d,
@@ -157,29 +167,38 @@ export async function fetchHistoryForType(typeId: number, force = false): Promis
         );
 
         db.prepare(`
-          INSERT INTO history_fetch_log (type_id, fetched_at, status, days_count)
-          VALUES (?, ?, ?, ?)
-          ON CONFLICT(type_id) DO UPDATE SET
+          INSERT INTO history_fetch_log (region_id, type_id, fetched_at, status, days_count)
+          VALUES (?, ?, ?, ?, ?)
+          ON CONFLICT(region_id, type_id) DO UPDATE SET
             fetched_at = excluded.fetched_at,
             status = excluded.status,
             days_count = excluded.days_count
-        `).run(typeId, fetchedAt, status === 404 || recentEntries.length === 0 ? 'empty' : 'ok', recentEntries.length);
+        `).run(
+          regionId,
+          typeId,
+          fetchedAt,
+          status === 404 || recentEntries.length === 0 ? 'empty' : 'ok',
+          recentEntries.length,
+        );
       });
 
       return recentEntries;
     } finally {
-      inFlightTypeFetches.delete(typeId);
+      inFlightTypeFetches.delete(inflightKey);
     }
   })();
 
-  inFlightTypeFetches.set(typeId, work);
+  inFlightTypeFetches.set(inflightKey, work);
   return work;
 }
 
 export async function runIncrementalHistoryBackfill(
   batchSize = 150,
+  hubId: HubId = 'jita',
 ): Promise<{ fetched: number; total: number }> {
   if (activeBackfillPromise) return activeBackfillPromise;
+
+  const hub = getHubById(hubId);
 
   activeBackfillPromise = (async () => {
     const db = getDb();
@@ -189,11 +208,16 @@ export async function runIncrementalHistoryBackfill(
       .prepare(`
         SELECT ms.type_id
         FROM market_summary ms
-        LEFT JOIN history_fetch_log hfl ON hfl.type_id = ms.type_id
-        LEFT JOIN watchlist w ON w.type_id = ms.type_id
-        LEFT JOIN character_orders co ON co.type_id = ms.type_id
-        LEFT JOIN item_types it ON it.type_id = ms.type_id
-        WHERE ms.best_bid IS NOT NULL
+        LEFT JOIN history_fetch_log hfl
+          ON hfl.region_id = ? AND hfl.type_id = ms.type_id
+        LEFT JOIN watchlist w
+          ON w.hub_id = ms.hub_id AND w.type_id = ms.type_id
+        LEFT JOIN character_orders co
+          ON co.hub_id = ms.hub_id AND co.type_id = ms.type_id
+        LEFT JOIN item_types it
+          ON it.type_id = ms.type_id
+        WHERE ms.hub_id = ?
+          AND ms.best_bid IS NOT NULL
           AND ms.best_ask IS NOT NULL
           AND ms.best_ask > ms.best_bid
           AND (hfl.fetched_at IS NULL OR hfl.fetched_at < ?)
@@ -205,7 +229,7 @@ export async function runIncrementalHistoryBackfill(
           (ms.recent_updates_24h * 3 + ms.buy_order_count + ms.sell_order_count) DESC
         LIMIT ?
       `)
-      .all(staleCutoff, batchSize) as Array<{ type_id: number }>;
+      .all(hub.regionId, hub.id, staleCutoff, batchSize) as Array<{ type_id: number }>;
 
     backfillState.running = true;
     backfillState.done = 0;
@@ -220,8 +244,16 @@ export async function runIncrementalHistoryBackfill(
 
     const startedAt = new Date().toISOString();
     const runInfo = db
-      .prepare('INSERT INTO sync_runs (kind, status, started_at, detail) VALUES (?, ?, ?, ?)')
-      .run('history', 'running', startedAt, `Backfilling 30d history for ${candidates.length} priority Jita items`);
+      .prepare(
+        'INSERT INTO sync_runs (hub_id, kind, status, started_at, detail) VALUES (?, ?, ?, ?, ?)',
+      )
+      .run(
+        hub.id,
+        'history',
+        'running',
+        startedAt,
+        `Backfilling 30d ${hub.regionName} history for ${candidates.length} priority ${hub.shortName} items`,
+      );
     const runId = Number(runInfo.lastInsertRowid);
 
     let fetched = 0;
@@ -239,7 +271,7 @@ export async function runIncrementalHistoryBackfill(
 
           const { type_id } = candidates[idx];
           try {
-            await fetchHistoryForType(type_id);
+            await fetchHistoryForType(type_id, false, hub.regionId);
             fetched++;
           } catch (err) {
             const msg = err instanceof Error ? err.message : String(err);
@@ -261,7 +293,7 @@ export async function runIncrementalHistoryBackfill(
         'completed',
         new Date().toISOString(),
         fetched,
-        `Backfilled 30d Forge history for ${fetched}/${candidates.length} items`,
+        `Backfilled 30d ${hub.regionName} history for ${fetched}/${candidates.length} items`,
         runId,
       );
 

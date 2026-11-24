@@ -82,6 +82,7 @@ describe('Watchlist routes persistence', () => {
     });
     assert.equal(patchRes.status, 200);
     assert.deepEqual(patchRes.body, {
+      hubId: 'jita',
       typeId,
       note: 'Accumulate under 5 ISK',
       targetBuy: 4.5,

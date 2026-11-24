@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { getHubById, resolveHubId } from '../config.js';
 import { getDb } from '../db/database.js';
 import { getFeeConfig } from '../services/settingsService.js';
 import {
@@ -10,6 +11,7 @@ import {
 export const watchlistRouter = Router();
 
 interface WatchlistJoinRow extends MarketSummaryLike {
+  hub_id: string;
   type_id: number;
   note: string;
   target_buy: number | null;
@@ -29,13 +31,15 @@ interface WatchlistJoinRow extends MarketSummaryLike {
   history_updated_at: string | null;
 }
 
-watchlistRouter.get('/', (_req, res) => {
+watchlistRouter.get('/', (req, res) => {
   const db = getDb();
   const fees = getFeeConfig();
+  const hub = getHubById(resolveHubId(req.query.hub));
 
   const rows = db
     .prepare(`
       SELECT
+        w.hub_id,
         w.type_id,
         w.note,
         w.target_buy,
@@ -67,11 +71,12 @@ watchlistRouter.get('/', (_req, res) => {
         hm.updated_at AS history_updated_at
       FROM watchlist w
       LEFT JOIN item_types it ON it.type_id = w.type_id
-      LEFT JOIN market_summary ms ON ms.type_id = w.type_id
-      LEFT JOIN history_metrics hm ON hm.type_id = w.type_id
+      LEFT JOIN market_summary ms ON ms.hub_id = w.hub_id AND ms.type_id = w.type_id
+      LEFT JOIN history_metrics hm ON hm.region_id = ? AND hm.type_id = w.type_id
+      WHERE w.hub_id = ?
       ORDER BY w.created_at DESC
     `)
-    .all() as unknown as WatchlistJoinRow[];
+    .all(hub.regionId, hub.id) as unknown as WatchlistJoinRow[];
 
   const items = rows.map((row) => {
     const hasHistory = row.history_updated_at !== null;
@@ -92,6 +97,7 @@ watchlistRouter.get('/', (_req, res) => {
     const computed = computeItemMetrics(row, history, fees);
 
     return {
+      hubId: row.hub_id,
       typeId: row.type_id,
       name: row.name ?? `Type #${row.type_id}`,
       rootGroupName: row.root_group_name ?? 'Uncategorized',
@@ -112,7 +118,7 @@ watchlistRouter.get('/', (_req, res) => {
     };
   });
 
-  res.json({ items });
+  res.json({ hubId: hub.id, items });
 });
 
 function parseTargetPrice(
@@ -139,9 +145,13 @@ watchlistRouter.post('/', (req, res) => {
     return;
   }
 
+  const hubId = resolveHubId(req.query.hub ?? req.body?.hubId);
   const db = getDb();
-  const existing = db.prepare('SELECT * FROM watchlist WHERE type_id = ?').get(typeId) as
+  const existing = db
+    .prepare('SELECT * FROM watchlist WHERE hub_id = ? AND type_id = ?')
+    .get(hubId, typeId) as
     | {
+        hub_id: string;
         type_id: number;
         note: string;
         target_buy: number | null;
@@ -164,15 +174,15 @@ watchlistRouter.post('/', (req, res) => {
 
   const createdAt = existing?.created_at ?? new Date().toISOString();
   db.prepare(`
-    INSERT INTO watchlist (type_id, note, target_buy, target_sell, created_at)
-    VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT(type_id) DO UPDATE SET
+    INSERT INTO watchlist (hub_id, type_id, note, target_buy, target_sell, created_at)
+    VALUES (?, ?, ?, ?, ?, ?)
+    ON CONFLICT(hub_id, type_id) DO UPDATE SET
       note = excluded.note,
       target_buy = excluded.target_buy,
       target_sell = excluded.target_sell
-  `).run(typeId, note, targetBuy, targetSell, createdAt);
+  `).run(hubId, typeId, note, targetBuy, targetSell, createdAt);
 
-  res.status(201).json({ typeId, note, targetBuy, targetSell, createdAt });
+  res.status(201).json({ hubId, typeId, note, targetBuy, targetSell, createdAt });
 });
 
 watchlistRouter.patch('/:typeId', (req, res) => {
@@ -182,9 +192,18 @@ watchlistRouter.patch('/:typeId', (req, res) => {
     return;
   }
 
+  const hubId = resolveHubId(req.query.hub ?? req.body?.hubId);
   const db = getDb();
-  const existing = db.prepare('SELECT * FROM watchlist WHERE type_id = ?').get(typeId) as
-    | { type_id: number; note: string; target_buy: number | null; target_sell: number | null }
+  const existing = db
+    .prepare('SELECT * FROM watchlist WHERE hub_id = ? AND type_id = ?')
+    .get(hubId, typeId) as
+    | {
+        hub_id: string;
+        type_id: number;
+        note: string;
+        target_buy: number | null;
+        target_sell: number | null;
+      }
     | undefined;
   if (!existing) {
     res.status(404).json({ error: 'Watchlist item not found' });
@@ -202,14 +221,11 @@ watchlistRouter.patch('/:typeId', (req, res) => {
   const targetBuy = parsedBuy.value;
   const targetSell = parsedSell.value;
 
-  db.prepare('UPDATE watchlist SET note = ?, target_buy = ?, target_sell = ? WHERE type_id = ?').run(
-    note,
-    targetBuy,
-    targetSell,
-    typeId,
-  );
+  db.prepare(
+    'UPDATE watchlist SET note = ?, target_buy = ?, target_sell = ? WHERE hub_id = ? AND type_id = ?',
+  ).run(note, targetBuy, targetSell, hubId, typeId);
 
-  res.json({ typeId, note, targetBuy, targetSell });
+  res.json({ hubId, typeId, note, targetBuy, targetSell });
 });
 
 watchlistRouter.delete('/:typeId', (req, res) => {
@@ -219,7 +235,8 @@ watchlistRouter.delete('/:typeId', (req, res) => {
     return;
   }
 
+  const hubId = resolveHubId(req.query.hub);
   const db = getDb();
-  db.prepare('DELETE FROM watchlist WHERE type_id = ?').run(typeId);
-  res.json({ deleted: true, typeId });
+  db.prepare('DELETE FROM watchlist WHERE hub_id = ? AND type_id = ?').run(hubId, typeId);
+  res.json({ deleted: true, hubId, typeId });
 });

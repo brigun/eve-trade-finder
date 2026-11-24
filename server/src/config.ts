@@ -18,6 +18,7 @@ export const CLIENT_ORIGIN = process.env.CLIENT_ORIGIN ?? 'http://localhost:5173
 
 export const JITA_STATION_ID = 60003760;
 export const THE_FORGE_REGION_ID = 10000002;
+export * from './config/hubs.js';
 
 export const ESI_BASE_URL = 'https://esi.evetech.net/latest';
 export const ESI_DATASOURCE = 'tranquility';

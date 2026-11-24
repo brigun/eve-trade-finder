@@ -304,7 +304,7 @@ export function MarketGroupPicker({
             {visibleTree.length === 0 ? (
               <div className="py-6 text-center text-xs text-[#656A7C]">
                 {tree.length === 0
-                  ? 'Sync Jita 4-4 first to populate market segments.'
+                  ? 'Sync the active hub first to populate market segments.'
                   : `No market segments match "${search}"`}
               </div>
             ) : (

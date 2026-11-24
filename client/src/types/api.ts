@@ -1,3 +1,99 @@
+export type HubId = 'jita' | 'amarr' | 'dodixie' | 'rens' | 'hek' | 'amamake';
+
+export interface TradeHubFreshness {
+  hubId: HubId;
+  name: string;
+  shortName: string;
+  stationName: string;
+  stationCode: string;
+  regionId: number;
+  regionName: string;
+  security: number;
+  isLowSec: boolean;
+  accentColor: string;
+  lastSyncedAt: string | null;
+  twoSidedItems: number;
+  totalOrders: number;
+}
+
+export type ArbitrageMode = 'instant' | 'relist';
+
+export interface ArbitrageFilterState {
+  q: string;
+  mode: ArbitrageMode;
+  sourceHub: HubId | 'any';
+  destHub: HubId | 'any';
+  minRoiPct: number | null;
+  maxRoiPct: number | null;
+  minUnitProfit: number | null;
+  minTotalProfit: number | null;
+  minBuyPrice: number | null;
+  maxBuyPrice: number | null;
+  maxCargoM3: number | null;
+  minIskPerM3: number | null;
+  maxJumps: number | null;
+  hideLowSecRoutes: boolean;
+  minAvailableUnits: number | null;
+  hideAnomalies: boolean;
+  excludeRootGroups: string[];
+  marketGroupId: number | null;
+  marketGroupIds: number[];
+  sortBy: string;
+  sortDir: 'asc' | 'desc';
+}
+
+export interface ArbitrageOpportunity {
+  typeId: number;
+  name: string;
+  marketGroupId: number | null;
+  rootGroupName: string;
+  itemVolume: number | null;
+  mode: ArbitrageMode;
+  sourceHubId: HubId;
+  sourceHubName: string;
+  destHubId: HubId;
+  destHubName: string;
+  sourceAsk: number;
+  destBid: number | null;
+  destAsk: number | null;
+  buyPrice: number;
+  sellPrice: number;
+  unitBuyCost: number;
+  unitSellProceeds: number;
+  unitNetProfit: number;
+  roiPct: number;
+  availableUnits: number;
+  haulUnits: number;
+  fitsCargo: boolean;
+  totalBuyCost: number;
+  totalNetProfit: number;
+  totalVolumeM3: number | null;
+  iskPerM3: number | null;
+  jumps: number;
+  isLowSecRoute: boolean;
+  iskPerJump: number;
+  destDailyVolume7d: number | null;
+  hasAnomaly: boolean;
+  anomalies: AnomalyFlag[];
+}
+
+export interface ArbitrageResponse {
+  items: ArbitrageOpportunity[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+  mode: ArbitrageMode;
+  fees: FeeConfig;
+  summaryStats: {
+    totalMatched: number;
+    bestHaulProfit: number;
+    avgRoiPct: number;
+    syncedHubsCount: number;
+  };
+  hubs: TradeHubFreshness[];
+}
+
 export interface FeeConfig {
   brokerFeePct: number;
   salesTaxPct: number;
@@ -134,6 +230,8 @@ export interface MarketItemsResponse {
 }
 
 export interface MarketStats {
+  hubId?: HubId;
+  hubName?: string;
   totalJitaItems: number;
   twoSidedItems: number;
   totalJitaOrders: number;
@@ -183,6 +281,8 @@ export interface HistoryPoint {
 }
 
 export interface ItemDetailResponse {
+  hubId?: HubId;
+  hubName?: string;
   item: MarketItem;
   groupPath: string[];
   fees: FeeConfig;
@@ -231,11 +331,17 @@ export interface SyncStatusResponse {
   orderSync: {
     running: boolean;
     stage: string;
+    syncScope?: HubId | 'all' | null;
+    currentHubId?: HubId | null;
+    hubsDone?: number;
+    totalHubs?: number;
     pagesDone: number;
     totalPages: number;
     jitaOrdersCount: number;
+    ordersCount?: number;
     lastError: string | null;
   };
+  hubs?: TradeHubFreshness[];
   historyBackfill: {
     running: boolean;
     done: number;
@@ -323,6 +429,8 @@ export interface AppSettings {
   corpStanding: number;
   autoSyncEnabled: boolean;
   autoSyncIntervalMin: number;
+  autoSyncScope: 'active' | 'all';
+  activeHub: HubId;
   captureSharePct: number;
   esiClientId: string;
   ssoRedirectUri: string;
@@ -402,6 +510,9 @@ export interface SsoStatusResponse {
 
 export interface CharacterOrderItem {
   orderId: number;
+  hubId: HubId;
+  hubName: string;
+  locationId?: number | null;
   typeId: number;
   itemName: string;
   rootGroupName: string;
