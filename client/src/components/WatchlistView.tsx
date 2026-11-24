@@ -9,10 +9,12 @@ import {
   formatPct,
   parseIskShorthand,
 } from '../lib/format.ts';
-import type { WatchlistItem } from '../types/api.ts';
+import { getHubMeta } from '../lib/hubs.ts';
+import type { HubId, WatchlistItem } from '../types/api.ts';
 import { ItemIcon } from './ItemIcon.tsx';
 
 interface WatchlistViewProps {
+  activeHub: HubId;
   onSelectTypeId: (typeId: number) => void;
   onWatchlistChanged: () => void;
   onNotify: (msg: string) => void;
@@ -29,12 +31,14 @@ function parseTargetField(raw: string): { valid: boolean; value: number | null }
 }
 
 function WatchlistRow({
+  hubId,
   item,
   onSelect,
   onSave,
   onDelete,
   onNotify,
 }: {
+  hubId: HubId;
   item: WatchlistItem;
   onSelect: () => void;
   onSave: (
@@ -126,14 +130,18 @@ function WatchlistRow({
         return;
       }
       void api
-        .updateWatchlist(typeIdRef.current, {
-          note: nextNote,
-          targetBuy: parsedBuy.value,
-          targetSell: parsedSell.value,
-        })
+        .updateWatchlist(
+          typeIdRef.current,
+          {
+            note: nextNote,
+            targetBuy: parsedBuy.value,
+            targetSell: parsedSell.value,
+          },
+          hubId,
+        )
         .catch(() => {});
     };
-  }, []);
+  }, [hubId]);
 
   const parsedBuyLive = parseTargetField(targetBuy);
   const parsedSellLive = parseTargetField(targetSell);
@@ -412,17 +420,19 @@ function WatchlistRow({
 }
 
 export function WatchlistView({
+  activeHub,
   onSelectTypeId,
   onWatchlistChanged,
   onNotify,
 }: WatchlistViewProps) {
   const [items, setItems] = useState<WatchlistItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const hubMeta = getHubMeta(activeHub);
 
-  const load = async () => {
+  const load = async (hub = activeHub) => {
     setLoading(true);
     try {
-      const res = await api.getWatchlist();
+      const res = await api.getWatchlist(hub);
       setItems(res.items);
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'Failed to load Watchlist');
@@ -432,8 +442,8 @@ export function WatchlistView({
   };
 
   useEffect(() => {
-    void load();
-  }, []);
+    void load(activeHub);
+  }, [activeHub]);
 
   const handleSave = async (
     typeId: number,
@@ -442,7 +452,7 @@ export function WatchlistView({
     targetSell: number | null,
   ): Promise<boolean> => {
     try {
-      const updated = await api.updateWatchlist(typeId, { note, targetBuy, targetSell });
+      const updated = await api.updateWatchlist(typeId, { note, targetBuy, targetSell }, activeHub);
       setItems((prev) =>
         prev.map((row) =>
           row.typeId === typeId
@@ -455,7 +465,7 @@ export function WatchlistView({
             : row,
         ),
       );
-      onNotify('Saved watchlist targets & notes');
+      onNotify(`Saved ${hubMeta.shortName} watchlist targets & notes`);
       onWatchlistChanged();
       return true;
     } catch (err) {
@@ -466,9 +476,9 @@ export function WatchlistView({
 
   const handleDelete = async (typeId: number) => {
     try {
-      await api.removeWatchlist(typeId);
+      await api.removeWatchlist(typeId, activeHub);
       setItems((prev) => prev.filter((row) => row.typeId !== typeId));
-      onNotify('Removed item from Watchlist');
+      onNotify(`Removed item from ${hubMeta.shortName} Watchlist`);
       onWatchlistChanged();
     } catch (err) {
       onNotify(err instanceof Error ? err.message : 'Failed to remove item from Watchlist');
@@ -479,7 +489,7 @@ export function WatchlistView({
   if (loading) {
     return (
       <div className="bg-[#0F1118] border border-[#262938] rounded-md p-10 text-center text-xs font-mono-num text-[#9CA0B0]">
-        Loading Watchlist telemetry...
+        Loading {hubMeta.name} Watchlist telemetry...
       </div>
     );
   }
@@ -489,11 +499,11 @@ export function WatchlistView({
       <div className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md p-10 text-center">
         <Bookmark className="w-8 h-8 text-[#E07A63] mx-auto mb-3" />
         <h2 className="font-display text-base font-semibold text-[#EFEAE0]">
-          Your Jita Watchlist is Empty
+          Your {hubMeta.name} Watchlist is Empty
         </h2>
         <p className="mt-1.5 text-xs text-[#9CA0B0] max-w-md mx-auto">
           Click the star icon on any item in the Scanner or Item Detail drawer to track spreads,
-          target buy/sell prices, and personal notes across restarts.
+          target buy/sell prices, and personal notes for {hubMeta.name} across restarts.
         </p>
       </div>
     );
@@ -504,7 +514,7 @@ export function WatchlistView({
       <div className="px-4 py-3 bg-[#161923] border-b border-[#262938] flex items-center justify-between">
         <div>
           <h2 className="font-display text-sm font-semibold text-[#EFEAE0]">
-            Persisted Trade Watchlist
+            Persisted {hubMeta.name} Watchlist
           </h2>
           <p className="text-[11px] text-[#9CA0B0]">
             Track spread alerts, target entry/exit prices (supports 10m/500k shorthand, auto-saves on Enter or blur), and notes
@@ -531,7 +541,8 @@ export function WatchlistView({
           <tbody className="divide-y divide-[#262938]/70 text-xs">
             {items.map((item) => (
               <WatchlistRow
-                key={item.typeId}
+                key={`${activeHub}-${item.typeId}`}
+                hubId={activeHub}
                 item={item}
                 onSelect={() => onSelectTypeId(item.typeId)}
                 onSave={handleSave}

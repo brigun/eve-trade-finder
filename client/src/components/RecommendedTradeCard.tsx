@@ -6,10 +6,12 @@ import {
   formatUnitsCompact,
   nextEveTick,
 } from '../lib/format.ts';
-import type { MarketItem, RecommendedTradesResponse } from '../types/api.ts';
+import { getHubMeta } from '../lib/hubs.ts';
+import type { HubId, MarketItem, RecommendedTradesResponse } from '../types/api.ts';
 import { ItemIcon } from './ItemIcon.tsx';
 
 interface RecommendedTradeCardProps {
+  activeHub: HubId;
   recommended: RecommendedTradesResponse | null;
   loading: boolean;
   onSelectItem: (item: MarketItem) => void;
@@ -54,6 +56,7 @@ function FactorBar({
 }
 
 export function RecommendedTradeCard({
+  activeHub,
   recommended,
   loading,
   onSelectItem,
@@ -63,7 +66,7 @@ export function RecommendedTradeCard({
   if (loading && !recommended) {
     return (
       <section className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md px-4 py-3 text-xs font-mono-num text-[#656A7C]">
-        Evaluating top Jita 4-4 trade recommendation...
+        Evaluating top {getHubMeta(activeHub).name} trade recommendation...
       </section>
     );
   }

@@ -22,13 +22,16 @@ import {
   nextEveTick,
   parseIskShorthand,
 } from '../lib/format.ts';
-import type { ItemDetailResponse } from '../types/api.ts';
+import { getHubMeta, HUB_LIST } from '../lib/hubs.ts';
+import type { HubId, ItemDetailResponse } from '../types/api.ts';
 import { ItemGameInfoModal } from './ItemGameInfoModal.tsx';
 import { ItemIcon } from './ItemIcon.tsx';
 import { MarketCandlestickChart } from './MarketCandlestickChart.tsx';
 
 interface ItemDrawerProps {
   typeId: number | null;
+  hubId: HubId;
+  onHubChange?: (hub: HubId) => void;
   onClose: () => void;
   onWatchlistChanged: () => void;
   onNotify: (message: string) => void;
@@ -36,6 +39,8 @@ interface ItemDrawerProps {
 
 export function ItemDrawer({
   typeId,
+  hubId,
+  onHubChange,
   onClose,
   onWatchlistChanged,
   onNotify,
@@ -77,10 +82,10 @@ export function ItemDrawer({
     return formatted;
   };
 
-  const loadDetail = useCallback(async (id: number, autoFetchHistory: boolean) => {
+  const loadDetail = useCallback(async (id: number, targetHub: HubId, autoFetchHistory: boolean) => {
     setLoading(true);
     try {
-      const res = await api.getItemDetail(id);
+      const res = await api.getItemDetail(id, targetHub);
       setDetail(res);
       const initialBuy = res.item.bestBid > 0 ? nextEveTick(res.item.bestBid, 'up') : 0;
       const initialSell = res.item.bestAsk > 0 ? nextEveTick(res.item.bestAsk, 'down') : 0;
@@ -94,8 +99,8 @@ export function ItemDrawer({
       if (autoFetchHistory && !res.historyMeta) {
         setHistoryLoading(true);
         try {
-          await api.syncItemHistory(id, false);
-          const updated = await api.getItemDetail(id);
+          await api.syncItemHistory(id, false, targetHub);
+          const updated = await api.getItemDetail(id, targetHub);
           setDetail(updated);
         } finally {
           setHistoryLoading(false);
@@ -111,11 +116,11 @@ export function ItemDrawer({
   useEffect(() => {
     setGameInfoOpen(false);
     if (typeId !== null) {
-      void loadDetail(typeId, true);
+      void loadDetail(typeId, hubId, true);
     } else {
       setDetail(null);
     }
-  }, [typeId, loadDetail]);
+  }, [typeId, hubId, loadDetail]);
 
   const copyValue = async (label: string, text: string) => {
     try {
@@ -130,8 +135,8 @@ export function ItemDrawer({
     if (!detail) return;
     setHistoryLoading(true);
     try {
-      await api.syncItemHistory(detail.item.typeId, true);
-      const updated = await api.getItemDetail(detail.item.typeId);
+      await api.syncItemHistory(detail.item.typeId, true, hubId);
+      const updated = await api.getItemDetail(detail.item.typeId, hubId);
       setDetail(updated);
       onNotify(`Updated 30d history for ${detail.item.name}`);
     } catch (err) {
@@ -143,15 +148,16 @@ export function ItemDrawer({
 
   const handleToggleWatchlist = async () => {
     if (!detail) return;
+    const hubMeta = getHubMeta(hubId);
     if (detail.item.isWatchlisted) {
-      await api.removeWatchlist(detail.item.typeId);
-      onNotify(`Removed ${detail.item.name} from Watchlist`);
+      await api.removeWatchlist(detail.item.typeId, hubId);
+      onNotify(`Removed ${detail.item.name} from ${hubMeta.shortName} Watchlist`);
     } else {
-      await api.upsertWatchlist({ typeId: detail.item.typeId });
-      onNotify(`Added ${detail.item.name} to Watchlist`);
+      await api.upsertWatchlist({ typeId: detail.item.typeId }, hubId);
+      onNotify(`Added ${detail.item.name} to ${hubMeta.shortName} Watchlist`);
     }
     onWatchlistChanged();
-    await loadDetail(detail.item.typeId, false);
+    await loadDetail(detail.item.typeId, hubId, false);
   };
 
   const calcResult = useMemo(() => {
@@ -222,6 +228,24 @@ export function ItemDrawer({
           )}
 
           <div className="flex items-center gap-1.5 shrink-0">
+            {onHubChange ? (
+              <select
+                aria-label="Inspect Hub"
+                value={hubId}
+                onChange={(e) => onHubChange(e.target.value as HubId)}
+                className="px-2 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs font-mono-num text-[#EFEAE0]"
+              >
+                {HUB_LIST.map((h) => (
+                  <option key={h.id} value={h.id}>
+                    {h.shortName}
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <span className="px-2 py-1 rounded bg-[#08090D] border border-[#262938] text-[11px] font-mono-num text-[#9CA0B0]">
+                {getHubMeta(hubId).shortName}
+              </span>
+            )}
             {detail && (
               <>
                 <button
@@ -251,7 +275,7 @@ export function ItemDrawer({
                   type="button"
                   onClick={() => void handleRefreshHistory()}
                   disabled={historyLoading}
-                  title="Force refresh 30d Forge history from ESI"
+                  title={`Force refresh 30d ${getHubMeta(hubId).regionName} history from ESI`}
                   className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded bg-[#08090D] border border-[#262938] hover:border-[#9B7BFF] text-xs text-[#EFEAE0] cursor-pointer"
                 >
                   <RefreshCw className={`w-3.5 h-3.5 text-[#9B7BFF] ${historyLoading ? 'animate-spin' : ''}`} />
@@ -274,7 +298,7 @@ export function ItemDrawer({
         <div className="flex-1 overflow-y-auto p-5 space-y-5">
           {loading && !detail ? (
             <div className="py-12 text-center text-sm text-[#9CA0B0] font-mono-num">
-              Querying Jita 4-4 order depth...
+              Querying {getHubMeta(hubId).name} order depth...
             </div>
           ) : detail ? (
             <>
@@ -526,7 +550,7 @@ export function ItemDrawer({
                 <div className="flex items-center justify-between flex-wrap gap-2">
                   <div>
                     <h3 className="font-display text-xs font-semibold uppercase tracking-wider text-[#EFEAE0]">
-                      The Forge Price Candlesticks &amp; Buy/Sell Flow
+                      {getHubMeta(hubId).regionName} Price Candlesticks &amp; Buy/Sell Flow
                     </h3>
                     <p className="text-[11px] font-mono-num text-[#656A7C]">
                       {detail.item.hasHistory
@@ -547,7 +571,7 @@ export function ItemDrawer({
                   </div>
                 ) : detail.history.length === 0 ? (
                   <div className="h-40 flex items-center justify-center text-xs font-mono-num text-[#656A7C]">
-                    No historical trades recorded in The Forge over the last 45 days.
+                    No historical trades recorded in {getHubMeta(hubId).regionName} over the last 45 days.
                   </div>
                 ) : (
                   <MarketCandlestickChart

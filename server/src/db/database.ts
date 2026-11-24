@@ -23,6 +23,8 @@ const DEFAULT_SETTINGS: Record<string, string> = {
   corp_standing: '0',
   auto_sync_enabled: 'true',
   auto_sync_interval_min: '15',
+  auto_sync_scope: 'active',
+  active_hub: 'jita',
   capture_share_pct: '15',
   esi_client_id: DEFAULT_EVE_SSO_CLIENT_ID,
   sso_redirect_uri: DEFAULT_EVE_SSO_REDIRECT_URI,
@@ -184,6 +186,7 @@ export function initDatabase(customPath?: string): DatabaseSync {
   `);
 
   createSchema(db);
+  migrateSchemaToMultiHub(db);
   seedDefaults(db);
 
   if (!customPath) {
@@ -240,6 +243,7 @@ function createSchema(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS sync_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      hub_id TEXT DEFAULT 'jita',
       kind TEXT NOT NULL,
       status TEXT NOT NULL,
       started_at TEXT NOT NULL,
@@ -250,22 +254,26 @@ function createSchema(db: DatabaseSync): void {
       error_message TEXT
     );
 
-    CREATE TABLE IF NOT EXISTS jita_orders (
-      order_id INTEGER PRIMARY KEY,
+    CREATE TABLE IF NOT EXISTS hub_orders (
+      hub_id TEXT NOT NULL,
+      order_id INTEGER NOT NULL,
       type_id INTEGER NOT NULL,
+      location_id INTEGER,
       is_buy_order INTEGER NOT NULL,
       price REAL NOT NULL,
       volume_remain INTEGER NOT NULL,
       volume_total INTEGER NOT NULL,
       min_volume INTEGER NOT NULL,
       duration INTEGER NOT NULL,
-      issued TEXT NOT NULL
+      issued TEXT NOT NULL,
+      PRIMARY KEY (hub_id, order_id)
     );
-    CREATE INDEX IF NOT EXISTS idx_jita_orders_type_side_price
-      ON jita_orders(type_id, is_buy_order, price);
+    CREATE INDEX IF NOT EXISTS idx_hub_orders_hub_type_side_price
+      ON hub_orders(hub_id, type_id, is_buy_order, price);
 
     CREATE TABLE IF NOT EXISTS market_summary (
-      type_id INTEGER PRIMARY KEY,
+      hub_id TEXT NOT NULL DEFAULT 'jita',
+      type_id INTEGER NOT NULL,
       best_bid REAL,
       best_ask REAL,
       raw_best_bid REAL,
@@ -278,11 +286,13 @@ function createSchema(db: DatabaseSync): void {
       top_sell_competition INTEGER DEFAULT 0,
       recent_updates_1h INTEGER DEFAULT 0,
       recent_updates_24h INTEGER DEFAULT 0,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (hub_id, type_id)
     );
 
     CREATE TABLE IF NOT EXISTS market_snapshots (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
+      hub_id TEXT NOT NULL DEFAULT 'jita',
       captured_at TEXT NOT NULL,
       type_id INTEGER NOT NULL,
       best_bid REAL,
@@ -295,6 +305,7 @@ function createSchema(db: DatabaseSync): void {
       ON market_snapshots(type_id, captured_at);
 
     CREATE TABLE IF NOT EXISTS market_history (
+      region_id INTEGER NOT NULL DEFAULT 10000002,
       type_id INTEGER NOT NULL,
       date TEXT NOT NULL,
       average REAL NOT NULL,
@@ -302,18 +313,21 @@ function createSchema(db: DatabaseSync): void {
       lowest REAL NOT NULL,
       order_count INTEGER NOT NULL,
       volume INTEGER NOT NULL,
-      PRIMARY KEY (type_id, date)
+      PRIMARY KEY (region_id, type_id, date)
     );
 
     CREATE TABLE IF NOT EXISTS history_fetch_log (
-      type_id INTEGER PRIMARY KEY,
+      region_id INTEGER NOT NULL DEFAULT 10000002,
+      type_id INTEGER NOT NULL,
       fetched_at TEXT NOT NULL,
       status TEXT NOT NULL,
-      days_count INTEGER NOT NULL DEFAULT 0
+      days_count INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (region_id, type_id)
     );
 
     CREATE TABLE IF NOT EXISTS history_metrics (
-      type_id INTEGER PRIMARY KEY,
+      region_id INTEGER NOT NULL DEFAULT 10000002,
+      type_id INTEGER NOT NULL,
       daily_volume_7d REAL DEFAULT 0,
       daily_volume_30d REAL DEFAULT 0,
       daily_isk_volume_7d REAL DEFAULT 0,
@@ -323,7 +337,8 @@ function createSchema(db: DatabaseSync): void {
       volume_trend_pct REAL DEFAULT 0,
       price_trend_pct REAL DEFAULT 0,
       active_days_30d INTEGER DEFAULT 0,
-      updated_at TEXT NOT NULL
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (region_id, type_id)
     );
 
     CREATE TABLE IF NOT EXISTS settings (
@@ -332,11 +347,13 @@ function createSchema(db: DatabaseSync): void {
     );
 
     CREATE TABLE IF NOT EXISTS watchlist (
-      type_id INTEGER PRIMARY KEY,
+      hub_id TEXT NOT NULL DEFAULT 'jita',
+      type_id INTEGER NOT NULL,
       note TEXT DEFAULT '',
       target_buy REAL,
       target_sell REAL,
-      created_at TEXT NOT NULL
+      created_at TEXT NOT NULL,
+      PRIMARY KEY (hub_id, type_id)
     );
 
     CREATE TABLE IF NOT EXISTS filter_presets (
@@ -360,6 +377,8 @@ function createSchema(db: DatabaseSync): void {
     CREATE TABLE IF NOT EXISTS character_orders (
       order_id INTEGER PRIMARY KEY,
       character_id INTEGER NOT NULL,
+      hub_id TEXT NOT NULL DEFAULT 'jita',
+      location_id INTEGER,
       type_id INTEGER NOT NULL,
       is_buy_order INTEGER NOT NULL,
       price REAL NOT NULL,
@@ -408,6 +427,188 @@ function createSchema(db: DatabaseSync): void {
       fetched_at TEXT NOT NULL
     );
   `);
+}
+
+function getTableColumns(db: DatabaseSync, tableName: string): Set<string> {
+  const rows = db.prepare(`PRAGMA table_info(${tableName})`).all() as Array<{ name: string }>;
+  return new Set(rows.map((r) => r.name));
+}
+
+function tableExists(db: DatabaseSync, tableName: string): boolean {
+  const row = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName);
+  return Boolean(row);
+}
+
+function migrateSchemaToMultiHub(db: DatabaseSync): void {
+  withTransaction(db, () => {
+    if (tableExists(db, 'jita_orders')) {
+      const existingHubOrders = db.prepare('SELECT COUNT(*) AS cnt FROM hub_orders').get() as {
+        cnt: number;
+      };
+      if (existingHubOrders.cnt === 0) {
+        db.exec(`
+          INSERT OR IGNORE INTO hub_orders (
+            hub_id, order_id, type_id, location_id, is_buy_order, price,
+            volume_remain, volume_total, min_volume, duration, issued
+          )
+          SELECT
+            'jita', order_id, type_id, 60003760, is_buy_order, price,
+            volume_remain, volume_total, min_volume, duration, issued
+          FROM jita_orders;
+        `);
+      }
+      db.exec('DROP TABLE jita_orders;');
+    }
+
+    if (!getTableColumns(db, 'market_summary').has('hub_id')) {
+      db.exec(`
+        CREATE TABLE market_summary_new (
+          hub_id TEXT NOT NULL DEFAULT 'jita',
+          type_id INTEGER NOT NULL,
+          best_bid REAL,
+          best_ask REAL,
+          raw_best_bid REAL,
+          bid_min_volume INTEGER DEFAULT 1,
+          bid_volume INTEGER DEFAULT 0,
+          ask_volume INTEGER DEFAULT 0,
+          buy_order_count INTEGER DEFAULT 0,
+          sell_order_count INTEGER DEFAULT 0,
+          top_buy_competition INTEGER DEFAULT 0,
+          top_sell_competition INTEGER DEFAULT 0,
+          recent_updates_1h INTEGER DEFAULT 0,
+          recent_updates_24h INTEGER DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (hub_id, type_id)
+        );
+        INSERT INTO market_summary_new (
+          hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+          bid_volume, ask_volume, buy_order_count, sell_order_count,
+          top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+        )
+        SELECT
+          'jita', type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+          bid_volume, ask_volume, buy_order_count, sell_order_count,
+          top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+        FROM market_summary;
+        DROP TABLE market_summary;
+        ALTER TABLE market_summary_new RENAME TO market_summary;
+      `);
+    }
+
+    if (!getTableColumns(db, 'market_snapshots').has('hub_id')) {
+      db.exec("ALTER TABLE market_snapshots ADD COLUMN hub_id TEXT NOT NULL DEFAULT 'jita';");
+    }
+    db.exec(`
+      CREATE INDEX IF NOT EXISTS idx_market_snapshots_hub_type_time
+        ON market_snapshots(hub_id, type_id, captured_at);
+    `);
+
+    if (!getTableColumns(db, 'market_history').has('region_id')) {
+      db.exec(`
+        CREATE TABLE market_history_new (
+          region_id INTEGER NOT NULL DEFAULT 10000002,
+          type_id INTEGER NOT NULL,
+          date TEXT NOT NULL,
+          average REAL NOT NULL,
+          highest REAL NOT NULL,
+          lowest REAL NOT NULL,
+          order_count INTEGER NOT NULL,
+          volume INTEGER NOT NULL,
+          PRIMARY KEY (region_id, type_id, date)
+        );
+        INSERT INTO market_history_new (
+          region_id, type_id, date, average, highest, lowest, order_count, volume
+        )
+        SELECT 10000002, type_id, date, average, highest, lowest, order_count, volume
+        FROM market_history;
+        DROP TABLE market_history;
+        ALTER TABLE market_history_new RENAME TO market_history;
+      `);
+    }
+
+    if (!getTableColumns(db, 'history_fetch_log').has('region_id')) {
+      db.exec(`
+        CREATE TABLE history_fetch_log_new (
+          region_id INTEGER NOT NULL DEFAULT 10000002,
+          type_id INTEGER NOT NULL,
+          fetched_at TEXT NOT NULL,
+          status TEXT NOT NULL,
+          days_count INTEGER NOT NULL DEFAULT 0,
+          PRIMARY KEY (region_id, type_id)
+        );
+        INSERT INTO history_fetch_log_new (region_id, type_id, fetched_at, status, days_count)
+        SELECT 10000002, type_id, fetched_at, status, days_count
+        FROM history_fetch_log;
+        DROP TABLE history_fetch_log;
+        ALTER TABLE history_fetch_log_new RENAME TO history_fetch_log;
+      `);
+    }
+
+    if (!getTableColumns(db, 'history_metrics').has('region_id')) {
+      db.exec(`
+        CREATE TABLE history_metrics_new (
+          region_id INTEGER NOT NULL DEFAULT 10000002,
+          type_id INTEGER NOT NULL,
+          daily_volume_7d REAL DEFAULT 0,
+          daily_volume_30d REAL DEFAULT 0,
+          daily_isk_volume_7d REAL DEFAULT 0,
+          daily_isk_volume_30d REAL DEFAULT 0,
+          avg_price_7d REAL DEFAULT 0,
+          avg_price_30d REAL DEFAULT 0,
+          volume_trend_pct REAL DEFAULT 0,
+          price_trend_pct REAL DEFAULT 0,
+          active_days_30d INTEGER DEFAULT 0,
+          updated_at TEXT NOT NULL,
+          PRIMARY KEY (region_id, type_id)
+        );
+        INSERT INTO history_metrics_new (
+          region_id, type_id, daily_volume_7d, daily_volume_30d,
+          daily_isk_volume_7d, daily_isk_volume_30d, avg_price_7d, avg_price_30d,
+          volume_trend_pct, price_trend_pct, active_days_30d, updated_at
+        )
+        SELECT
+          10000002, type_id, daily_volume_7d, daily_volume_30d,
+          daily_isk_volume_7d, daily_isk_volume_30d, avg_price_7d, avg_price_30d,
+          volume_trend_pct, price_trend_pct, active_days_30d, updated_at
+        FROM history_metrics;
+        DROP TABLE history_metrics;
+        ALTER TABLE history_metrics_new RENAME TO history_metrics;
+      `);
+    }
+
+    if (!getTableColumns(db, 'watchlist').has('hub_id')) {
+      db.exec(`
+        CREATE TABLE watchlist_new (
+          hub_id TEXT NOT NULL DEFAULT 'jita',
+          type_id INTEGER NOT NULL,
+          note TEXT DEFAULT '',
+          target_buy REAL,
+          target_sell REAL,
+          created_at TEXT NOT NULL,
+          PRIMARY KEY (hub_id, type_id)
+        );
+        INSERT INTO watchlist_new (hub_id, type_id, note, target_buy, target_sell, created_at)
+        SELECT 'jita', type_id, note, target_buy, target_sell, created_at
+        FROM watchlist;
+        DROP TABLE watchlist;
+        ALTER TABLE watchlist_new RENAME TO watchlist;
+      `);
+    }
+
+    const charOrderCols = getTableColumns(db, 'character_orders');
+    if (!charOrderCols.has('hub_id')) {
+      db.exec("ALTER TABLE character_orders ADD COLUMN hub_id TEXT NOT NULL DEFAULT 'jita';");
+    }
+    if (!charOrderCols.has('location_id')) {
+      db.exec('ALTER TABLE character_orders ADD COLUMN location_id INTEGER;');
+    }
+
+    if (!getTableColumns(db, 'sync_runs').has('hub_id')) {
+      db.exec("ALTER TABLE sync_runs ADD COLUMN hub_id TEXT DEFAULT 'jita';");
+    }
+  });
 }
 
 function seedDefaults(db: DatabaseSync): void {

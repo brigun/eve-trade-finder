@@ -1,9 +1,12 @@
 import type {
   AppSettings,
+  ArbitrageFilterState,
+  ArbitrageResponse,
   CharacterOrderItem,
   FilterPreset,
   FilterState,
   HistoryPoint,
+  HubId,
   ItemDetailResponse,
   ItemGameInfo,
   LlmModelsResponse,
@@ -18,6 +21,7 @@ import type {
   RecommendedTradesResponse,
   SsoStatusResponse,
   SyncStatusResponse,
+  TradeHubFreshness,
   WatchlistItem,
 } from '../types/api.ts';
 
@@ -83,17 +87,76 @@ export function buildMarketQueryParams(
   return params;
 }
 
+export function buildArbitrageQueryParams(
+  filters: ArbitrageFilterState,
+  page: number,
+  pageSize: number,
+): URLSearchParams {
+  const params = new URLSearchParams();
+  if (filters.q.trim()) params.set('q', filters.q.trim());
+  params.set('mode', filters.mode);
+  params.set('sourceHub', filters.sourceHub);
+  params.set('destHub', filters.destHub);
+  if (filters.minRoiPct !== null) params.set('minRoiPct', String(filters.minRoiPct));
+  if (filters.maxRoiPct !== null) params.set('maxRoiPct', String(filters.maxRoiPct));
+  if (filters.minUnitProfit !== null) params.set('minUnitProfit', String(filters.minUnitProfit));
+  if (filters.minTotalProfit !== null) params.set('minTotalProfit', String(filters.minTotalProfit));
+  if (filters.minBuyPrice !== null) params.set('minBuyPrice', String(filters.minBuyPrice));
+  if (filters.maxBuyPrice !== null) params.set('maxBuyPrice', String(filters.maxBuyPrice));
+  if (filters.maxCargoM3 !== null) params.set('maxCargoM3', String(filters.maxCargoM3));
+  if (filters.minIskPerM3 !== null) params.set('minIskPerM3', String(filters.minIskPerM3));
+  if (filters.maxJumps !== null) params.set('maxJumps', String(filters.maxJumps));
+  if (filters.hideLowSecRoutes) params.set('hideLowSecRoutes', 'true');
+  if (filters.minAvailableUnits !== null) {
+    params.set('minAvailableUnits', String(filters.minAvailableUnits));
+  }
+  if (filters.hideAnomalies) params.set('hideAnomalies', 'true');
+  if (filters.excludeRootGroups.length > 0) {
+    params.set('excludeRootGroups', filters.excludeRootGroups.join(','));
+  }
+  if (filters.marketGroupId !== null) {
+    params.set('marketGroupId', String(filters.marketGroupId));
+  }
+  if (filters.marketGroupIds.length > 0) {
+    params.set('marketGroupIds', filters.marketGroupIds.join(','));
+  }
+  params.set('sortBy', filters.sortBy);
+  params.set('sortDir', filters.sortDir);
+  params.set('page', String(page));
+  params.set('pageSize', String(pageSize));
+  return params;
+}
+
 export const api = {
-  getMarketItems(filters: FilterState, page = 1, pageSize = 50): Promise<MarketItemsResponse> {
+  getHubs(): Promise<{ freshness: TradeHubFreshness[] }> {
+    return requestJson<{ freshness: TradeHubFreshness[] }>('/api/market/hubs');
+  },
+  getMarketItems(
+    filters: FilterState,
+    page = 1,
+    pageSize = 50,
+    hubId: HubId = 'jita',
+  ): Promise<MarketItemsResponse> {
     const params = buildMarketQueryParams(filters, page, pageSize);
+    params.set('hub', hubId);
     return requestJson<MarketItemsResponse>(`/api/market/items?${params.toString()}`);
   },
+  getArbitrageOpportunities(
+    filters: ArbitrageFilterState,
+    page = 1,
+    pageSize = 50,
+  ): Promise<ArbitrageResponse> {
+    const params = buildArbitrageQueryParams(filters, page, pageSize);
+    return requestJson<ArbitrageResponse>(`/api/arbitrage/opportunities?${params.toString()}`);
+  },
   getRecommendedTrades(opts?: {
+    hubId?: HubId;
     minRoiPct?: number;
     marketGroupId?: number | null;
     marketGroupIds?: number[];
   }): Promise<RecommendedTradesResponse> {
     const params = new URLSearchParams();
+    if (opts?.hubId) params.set('hub', opts.hubId);
     if (opts?.minRoiPct !== undefined) params.set('minRoiPct', String(opts.minRoiPct));
     if (opts?.marketGroupId !== undefined && opts.marketGroupId !== null) {
       params.set('marketGroupId', String(opts.marketGroupId));
@@ -106,16 +169,20 @@ export const api = {
       `/api/market/recommended${qs ? `?${qs}` : ''}`,
     );
   },
-  getMarketStats(): Promise<MarketStats> {
-    return requestJson<MarketStats>('/api/market/stats');
+  getMarketStats(hubId: HubId = 'jita'): Promise<MarketStats> {
+    return requestJson<MarketStats>(`/api/market/stats?hub=${encodeURIComponent(hubId)}`);
   },
-  getMarketGroups(): Promise<{ groups: MarketGroupCount[]; tree: MarketGroupTreeNode[] }> {
+  getMarketGroups(
+    hubId: HubId = 'jita',
+  ): Promise<{ groups: MarketGroupCount[]; tree: MarketGroupTreeNode[] }> {
     return requestJson<{ groups: MarketGroupCount[]; tree: MarketGroupTreeNode[] }>(
-      '/api/market/groups',
+      `/api/market/groups?hub=${encodeURIComponent(hubId)}`,
     );
   },
-  getItemDetail(typeId: number): Promise<ItemDetailResponse> {
-    return requestJson<ItemDetailResponse>(`/api/market/items/${typeId}`);
+  getItemDetail(typeId: number, hubId: HubId = 'jita'): Promise<ItemDetailResponse> {
+    return requestJson<ItemDetailResponse>(
+      `/api/market/items/${typeId}?hub=${encodeURIComponent(hubId)}`,
+    );
   },
   getItemGameInfo(typeId: number, force = false): Promise<{ gameInfo: ItemGameInfo }> {
     return requestJson<{ gameInfo: ItemGameInfo }>(
@@ -125,48 +192,67 @@ export const api = {
   getSyncStatus(): Promise<SyncStatusResponse> {
     return requestJson<SyncStatusResponse>('/api/sync/status');
   },
-  triggerOrderSync(): Promise<{ started: boolean; alreadyRunning: boolean }> {
-    return requestJson('/api/sync/orders', { method: 'POST' });
+  triggerOrderSync(hubId: HubId | 'all' = 'jita'): Promise<{ started: boolean; alreadyRunning: boolean }> {
+    return requestJson(`/api/sync/orders?hub=${encodeURIComponent(hubId)}`, { method: 'POST' });
+  },
+  triggerAllHubsSync(): Promise<{ started: boolean; alreadyRunning: boolean }> {
+    return requestJson('/api/sync/orders?hub=all', { method: 'POST' });
   },
   triggerSdeSync(): Promise<{ started: boolean; alreadyRunning: boolean }> {
     return requestJson('/api/sync/sde', { method: 'POST' });
   },
-  triggerHistoryBackfill(batchSize = 150): Promise<{ started: boolean; alreadyRunning: boolean }> {
-    return requestJson(`/api/sync/history/backfill?batchSize=${batchSize}`, { method: 'POST' });
+  triggerHistoryBackfill(
+    batchSize = 150,
+    hubId: HubId = 'jita',
+  ): Promise<{ started: boolean; alreadyRunning: boolean }> {
+    return requestJson(
+      `/api/sync/history/backfill?batchSize=${batchSize}&hub=${encodeURIComponent(hubId)}`,
+      { method: 'POST' },
+    );
   },
   syncItemHistory(
     typeId: number,
     force = false,
+    hubId: HubId = 'jita',
   ): Promise<{ typeId: number; daysCount: number; history: HistoryPoint[] }> {
-    return requestJson(`/api/sync/history/${typeId}?force=${force ? 'true' : 'false'}`, {
-      method: 'POST',
-    });
+    return requestJson(
+      `/api/sync/history/${typeId}?force=${force ? 'true' : 'false'}&hub=${encodeURIComponent(hubId)}`,
+      { method: 'POST' },
+    );
   },
-  getWatchlist(): Promise<{ items: WatchlistItem[] }> {
-    return requestJson<{ items: WatchlistItem[] }>('/api/watchlist');
+  getWatchlist(hubId: HubId = 'jita'): Promise<{ items: WatchlistItem[] }> {
+    return requestJson<{ items: WatchlistItem[] }>(
+      `/api/watchlist?hub=${encodeURIComponent(hubId)}`,
+    );
   },
-  upsertWatchlist(payload: {
-    typeId: number;
-    note?: string;
-    targetBuy?: number | null;
-    targetSell?: number | null;
-  }): Promise<unknown> {
-    return requestJson('/api/watchlist', {
+  upsertWatchlist(
+    payload: {
+      typeId: number;
+      note?: string;
+      targetBuy?: number | null;
+      targetSell?: number | null;
+    },
+    hubId: HubId = 'jita',
+  ): Promise<unknown> {
+    return requestJson(`/api/watchlist?hub=${encodeURIComponent(hubId)}`, {
       method: 'POST',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, hubId }),
     });
   },
   updateWatchlist(
     typeId: number,
     payload: { note?: string; targetBuy?: number | null; targetSell?: number | null },
+    hubId: HubId = 'jita',
   ): Promise<{ typeId: number; note: string; targetBuy: number | null; targetSell: number | null }> {
-    return requestJson(`/api/watchlist/${typeId}`, {
+    return requestJson(`/api/watchlist/${typeId}?hub=${encodeURIComponent(hubId)}`, {
       method: 'PATCH',
-      body: JSON.stringify(payload),
+      body: JSON.stringify({ ...payload, hubId }),
     });
   },
-  removeWatchlist(typeId: number): Promise<unknown> {
-    return requestJson(`/api/watchlist/${typeId}`, { method: 'DELETE' });
+  removeWatchlist(typeId: number, hubId: HubId = 'jita'): Promise<unknown> {
+    return requestJson(`/api/watchlist/${typeId}?hub=${encodeURIComponent(hubId)}`, {
+      method: 'DELETE',
+    });
   },
   getPresets(): Promise<{ presets: FilterPreset[] }> {
     return requestJson<{ presets: FilterPreset[] }>('/api/presets');
@@ -207,12 +293,12 @@ export const api = {
   logoutAuth(): Promise<unknown> {
     return requestJson('/api/auth/logout', { method: 'POST' });
   },
-  getCharacterOrders(): Promise<{
+  getCharacterOrders(hubId: HubId | 'all' = 'all'): Promise<{
     connected: boolean;
     characterName?: string;
     orders: CharacterOrderItem[];
   }> {
-    return requestJson('/api/auth/orders');
+    return requestJson(`/api/auth/orders?hub=${encodeURIComponent(hubId)}`);
   },
   getAdvisorStatus(): Promise<NeonAdvisorStatus> {
     return requestJson<NeonAdvisorStatus>('/api/advisor/status');
@@ -224,6 +310,7 @@ export const api = {
     return requestJson<{ briefing: NeonBriefingResponse | null }>('/api/advisor/latest');
   },
   askNeon(payload: {
+    hubId?: HubId;
     budgetIsk?: number | null;
     sessionStyle?: NeonSessionStyle;
     userNote?: string;

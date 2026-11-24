@@ -19,10 +19,12 @@ import {
   formatPct,
   formatUnitsCompact,
 } from '../lib/format.ts';
-import type { FilterFailure, LookupMarketItem, MarketItem } from '../types/api.ts';
+import { getHubMeta } from '../lib/hubs.ts';
+import type { FilterFailure, HubId, LookupMarketItem, MarketItem } from '../types/api.ts';
 import { ItemIcon } from './ItemIcon.tsx';
 
 interface MarketTableProps {
+  activeHub: HubId;
   items: MarketItem[];
   total: number;
   page: number;
@@ -101,6 +103,7 @@ function SortHeader({
 }
 
 export function MarketTable({
+  activeHub,
   items,
   total,
   page,
@@ -127,6 +130,8 @@ export function MarketTable({
   onHoverLookupItem,
   onRelaxFilter,
 }: MarketTableProps) {
+  const hubMeta = getHubMeta(activeHub);
+
   if (!hasAnyData && !loading) {
     return (
       <div className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md p-8 sm:p-12 text-center">
@@ -134,13 +139,13 @@ export function MarketTable({
           <DatabaseZap className="w-6 h-6 text-[#9B7BFF]" />
         </div>
         <h2 className="font-display text-lg font-semibold text-[#EFEAE0]">
-          Jita 4-4 Local Database Ready
+          {hubMeta.name} Local Database Ready
         </h2>
         <p className="mt-2 max-w-xl mx-auto text-sm text-[#9CA0B0]">
           Your local SQLite telemetry store is initialized. Sync the EVE static item catalog and
-          pull live The Forge market orders filtered strictly to{' '}
+          pull live {hubMeta.regionName} market orders filtered strictly to{' '}
           <span className="font-mono-num text-[#EFEAE0]">
-            Jita IV - Moon 4 - Caldari Navy Assembly Plant
+            {hubMeta.stationName}
           </span>
           .
         </p>
@@ -153,7 +158,9 @@ export function MarketTable({
           >
             <RefreshCw className={`w-4 h-4 ${syncingOrders ? 'animate-spin' : ''}`} />
             <span>
-              {syncingOrders ? 'Syncing SDE & Jita Orders...' : 'Initialize SDE & Sync Jita 4-4'}
+              {syncingOrders
+                ? `Syncing SDE & ${hubMeta.shortName} Orders...`
+                : `Initialize SDE & Sync ${hubMeta.name}`}
             </span>
           </button>
         </div>
@@ -170,7 +177,7 @@ export function MarketTable({
     return (
       <div className="bg-[#0F1118] border border-[#262938] rounded-md p-10 text-center">
         <p className="font-display text-base font-medium text-[#EFEAE0]">
-          No Jita 4-4 items match your active constraints
+          No {hubMeta.name} items match your active constraints
         </p>
         {quickExcludeBlocking ? (
           <div className="mt-2.5 max-w-xl mx-auto space-y-2">
@@ -369,7 +376,7 @@ export function MarketTable({
         {/* Best Buy */}
         <td
           className="px-3 py-2 text-right font-mono-num text-[#EFEAE0] whitespace-nowrap"
-          title={item.bestBid > 0 ? `${formatIskExact(item.bestBid)} ISK` : 'No active Jita 4-4 buy orders'}
+          title={item.bestBid > 0 ? `${formatIskExact(item.bestBid)} ISK` : `No active ${hubMeta.name} buy orders`}
         >
           {item.bestBid > 0 ? formatIskCompact(item.bestBid, false) : <span className="text-[#656A7C]">—</span>}
         </td>
@@ -377,7 +384,7 @@ export function MarketTable({
         {/* Best Sell */}
         <td
           className="px-3 py-2 text-right font-mono-num text-[#9CA0B0] whitespace-nowrap"
-          title={item.bestAsk > 0 ? `${formatIskExact(item.bestAsk)} ISK` : 'No active Jita 4-4 sell orders'}
+          title={item.bestAsk > 0 ? `${formatIskExact(item.bestAsk)} ISK` : `No active ${hubMeta.name} sell orders`}
         >
           {item.bestAsk > 0 ? formatIskCompact(item.bestAsk, false) : <span className="text-[#656A7C]">—</span>}
         </td>
@@ -394,7 +401,7 @@ export function MarketTable({
           title={
             hasTwoSidedBook
               ? `${formatIskExact(item.netProfit)} ISK/unit after fees`
-              : 'Requires both Buy and Sell orders in Jita 4-4'
+              : `Requires both Buy and Sell orders in ${hubMeta.name}`
           }
         >
           {hasTwoSidedBook ? formatIskCompact(item.netProfit, false) : '—'}

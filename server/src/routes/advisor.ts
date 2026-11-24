@@ -1,4 +1,5 @@
 import { Router } from 'express';
+import { resolveHubId } from '../config.js';
 import {
   consultNeon,
   getLatestNeonBriefing,
@@ -41,6 +42,7 @@ advisorRouter.post('/ask-neon', async (req, res) => {
       : [];
 
     const briefing = await consultNeon({
+      hubId: resolveHubId(body.hubId ?? req.query.hub),
       budgetIsk: budgetIsk !== null && Number.isFinite(budgetIsk) ? budgetIsk : null,
       sessionStyle: body.sessionStyle,
       userNote: typeof body.userNote === 'string' ? body.userNote : '',
@@ -60,7 +62,7 @@ advisorRouter.post('/ask-neon', async (req, res) => {
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Failed to consult Neon advisor';
     const isClientConfigError =
-      /API key is not configured|No Jita 4-4|No .*matched/i.test(message);
+      /API key is not configured|No .*market data synced|No .*matched/i.test(message);
     res.status(isClientConfigError ? 400 : 500).json({ error: message });
   }
 });

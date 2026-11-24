@@ -13,15 +13,18 @@ import {
   X,
 } from 'lucide-react';
 import { formatShorthandInput, parseIskShorthand } from '../lib/format.ts';
+import { getHubMeta } from '../lib/hubs.ts';
 import type {
   FilterKey,
   FilterPreset,
   FilterState,
+  HubId,
   MarketGroupTreeNode,
 } from '../types/api.ts';
 import { MarketGroupPicker } from './MarketGroupPicker.tsx';
 
 interface FilterBarProps {
+  activeHub: HubId;
   filters: FilterState;
   presets: FilterPreset[];
   groupTree: MarketGroupTreeNode[];
@@ -249,6 +252,7 @@ const CURATED_SEGMENTS: Array<{
 ];
 
 export function FilterBar({
+  activeHub,
   filters,
   presets,
   groupTree,
@@ -320,7 +324,7 @@ export function FilterBar({
             type="text"
             value={filters.q}
             onChange={(e) => onChange({ ...filters, q: e.target.value })}
-            placeholder="Lookup any Jita item by name or Type ID..."
+            placeholder={`Lookup any ${getHubMeta(activeHub).shortName} item by name or Type ID...`}
             className="w-full pl-8 pr-7 py-1.5 rounded bg-[#08090D] border border-[#262938] focus:border-[#9B7BFF] focus:outline-none text-xs text-[#EFEAE0] placeholder:text-[#656A7C]"
           />
           {filters.q && (

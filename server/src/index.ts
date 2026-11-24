@@ -6,6 +6,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { CLIENT_DIST_DIR, CLIENT_ORIGIN, PORT } from './config.js';
 import { initDatabase } from './db/database.js';
 import { advisorRouter } from './routes/advisor.js';
+import { arbitrageRouter } from './routes/arbitrage.js';
 import { authRouter } from './routes/auth.js';
 import { marketRouter } from './routes/market.js';
 import { presetsRouter } from './routes/presets.js';
@@ -30,6 +31,7 @@ export function createApp() {
   });
 
   app.use('/api/market', marketRouter);
+  app.use('/api/arbitrage', arbitrageRouter);
   app.use('/api/sync', syncRouter);
   app.use('/api/watchlist', watchlistRouter);
   app.use('/api/presets', presetsRouter);

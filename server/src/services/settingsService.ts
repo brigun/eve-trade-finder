@@ -1,12 +1,15 @@
 import {
   DEFAULT_EVE_SSO_CLIENT_ID,
   DEFAULT_EVE_SSO_REDIRECT_URI,
+  resolveHubId,
+  type HubId,
 } from '../config.js';
 import { getDb, withTransaction } from '../db/database.js';
 import type { FeeConfig } from './tradeAnalytics.js';
 
 export type LlmProvider = 'gemini' | 'openai_compat';
 export type LlmThinkingLevel = 'LOW' | 'MEDIUM' | 'HIGH';
+export type AutoSyncScope = 'active' | 'all';
 
 export interface AppSettings {
   brokerFeePct: number;
@@ -17,6 +20,8 @@ export interface AppSettings {
   corpStanding: number;
   autoSyncEnabled: boolean;
   autoSyncIntervalMin: number;
+  autoSyncScope: AutoSyncScope;
+  activeHub: HubId;
   captureSharePct: number;
   esiClientId: string;
   ssoRedirectUri: string;
@@ -105,6 +110,8 @@ export function getAllSettings(): AppSettings {
     corpStanding: toNum(map.get('corp_standing'), 0),
     autoSyncEnabled: (map.get('auto_sync_enabled') ?? 'true') === 'true',
     autoSyncIntervalMin: Math.max(5, Math.round(toNum(map.get('auto_sync_interval_min'), 15))),
+    autoSyncScope: map.get('auto_sync_scope') === 'all' ? 'all' : 'active',
+    activeHub: resolveHubId(map.get('active_hub')),
     captureSharePct: Math.min(100, Math.max(1, toNum(map.get('capture_share_pct'), 15))),
     esiClientId: (map.get('esi_client_id') ?? '').trim() || DEFAULT_EVE_SSO_CLIENT_ID,
     ssoRedirectUri: (map.get('sso_redirect_uri') ?? '').trim() || DEFAULT_EVE_SSO_REDIRECT_URI,
@@ -140,6 +147,8 @@ export function updateSettings(partial: SettingsUpdatePatch): AppSettings {
     corpStanding: 'corp_standing',
     autoSyncEnabled: 'auto_sync_enabled',
     autoSyncIntervalMin: 'auto_sync_interval_min',
+    autoSyncScope: 'auto_sync_scope',
+    activeHub: 'active_hub',
     captureSharePct: 'capture_share_pct',
     esiClientId: 'esi_client_id',
     ssoRedirectUri: 'sso_redirect_uri',

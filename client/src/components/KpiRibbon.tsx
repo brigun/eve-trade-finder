@@ -1,8 +1,10 @@
 import { Flame, Layers, LineChart, Target } from 'lucide-react';
 import { formatPct } from '../lib/format.ts';
-import type { MarketStats } from '../types/api.ts';
+import { getHubMeta } from '../lib/hubs.ts';
+import type { HubId, MarketStats } from '../types/api.ts';
 
 interface KpiRibbonProps {
+  activeHub: HubId;
   stats: MarketStats | null;
   matchedCount: number;
   avgRoiPct: number;
@@ -11,6 +13,7 @@ interface KpiRibbonProps {
 }
 
 export function KpiRibbon({
+  activeHub,
   stats,
   matchedCount,
   avgRoiPct,
@@ -18,14 +21,15 @@ export function KpiRibbon({
   onToggleTrending,
 }: KpiRibbonProps) {
   const coveragePct = stats?.historyCoveragePct ?? 0;
+  const hubMeta = getHubMeta(activeHub);
 
   return (
     <section className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
-      {/* KPI 1: Jita 4-4 Market Coverage */}
+      {/* KPI 1: Active Hub Market Coverage */}
       <div className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md px-4 py-3">
         <div className="flex items-center justify-between">
           <span className="text-[10px] font-mono-num uppercase tracking-widest text-[#656A7C]">
-            Jita 4-4 Active Markets
+            {hubMeta.name} Active Markets
           </span>
           <Layers className="w-3.5 h-3.5 text-[#9B7BFF]" />
         </div>
