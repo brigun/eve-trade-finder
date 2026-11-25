@@ -688,6 +688,7 @@ export function ArbitrageView({
                     </th>
                     <th
                       className="px-3 py-2.5 text-right cursor-pointer hover:text-[#EFEAE0]"
+                      title="Capped by near-top-of-book depth (±2% of best price) and Max Cargo m³"
                       onClick={() => handleSort('haulUnits')}
                     >
                       Haul Qty {renderSortArrow('haulUnits')}
@@ -779,11 +780,27 @@ export function ArbitrageView({
                         </td>
 
                         <td className="px-3 py-2.5 text-right font-mono-num text-[#EFEAE0]">
-                          {formatIskExact(opp.buyPrice)}
+                          <div>{formatIskExact(opp.buyPrice)}</div>
+                          {opp.sourceTickMatched && (
+                            <div
+                              title="1-tick source spread: matches Source Best Bid instead of crossing Source Best Ask"
+                              className="text-[9px] text-[#F5B841]/90"
+                            >
+                              =BID
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-3 py-2.5 text-right font-mono-num text-[#9CA0B0]">
-                          {formatIskExact(opp.sellPrice)}
+                          <div>{formatIskExact(opp.sellPrice)}</div>
+                          {opp.destTickMatched && (
+                            <div
+                              title="1-tick destination spread: matches Dest Best Ask instead of crossing Dest Best Bid"
+                              className="text-[9px] text-[#B298FF]/90"
+                            >
+                              =ASK
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-3 py-2.5 text-right font-mono-num text-[#46E595]">
@@ -801,7 +818,10 @@ export function ArbitrageView({
                           {formatPct(opp.roiPct)}
                         </td>
 
-                        <td className="px-3 py-2.5 text-right font-mono-num text-[#EFEAE0]">
+                        <td
+                          title={`Available near-top depth: ${opp.availableUnits.toLocaleString()} units (within ±2% of best price)`}
+                          className="px-3 py-2.5 text-right font-mono-num text-[#EFEAE0]"
+                        >
                           <div>{opp.haulUnits.toLocaleString()}</div>
                           {opp.totalVolumeM3 !== null && (
                             <div className="text-[10px] text-[#656A7C]">

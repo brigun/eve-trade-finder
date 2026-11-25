@@ -65,6 +65,8 @@ interface RawArbitrageSummaryRow {
   bid_min_volume: number;
   bid_volume: number;
   ask_volume: number;
+  top_bid_volume: number;
+  top_ask_volume: number;
   buy_order_count: number;
   sell_order_count: number;
   dest_daily_volume_7d: number | null;
@@ -131,6 +133,8 @@ arbitrageRouter.get('/opportunities', (req, res) => {
         COALESCE(ms.bid_min_volume, 1) AS bid_min_volume,
         COALESCE(ms.bid_volume, 0) AS bid_volume,
         COALESCE(ms.ask_volume, 0) AS ask_volume,
+        COALESCE(ms.top_bid_volume, 0) AS top_bid_volume,
+        COALESCE(ms.top_ask_volume, 0) AS top_ask_volume,
         COALESCE(ms.buy_order_count, 0) AS buy_order_count,
         COALESCE(ms.sell_order_count, 0) AS sell_order_count,
         hm.daily_volume_7d AS dest_daily_volume_7d,
@@ -170,6 +174,8 @@ arbitrageRouter.get('/opportunities', (req, res) => {
       bid_min_volume: r.bid_min_volume,
       bid_volume: r.bid_volume,
       ask_volume: r.ask_volume,
+      top_bid_volume: r.top_bid_volume,
+      top_ask_volume: r.top_ask_volume,
       buy_order_count: r.buy_order_count,
       sell_order_count: r.sell_order_count,
       dest_daily_volume_7d: r.dest_daily_volume_7d,

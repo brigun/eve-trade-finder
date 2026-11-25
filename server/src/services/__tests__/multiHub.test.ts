@@ -345,12 +345,118 @@ describe('Multi-hub SQLite migration and API routes', () => {
     assert.equal(instantBidOnly.body.items.some((o) => o.typeId === 2002), false);
 
     const buyToBuyBidOnly = await requestJson<{
-      items: Array<{ typeId: number; sourceAsk: number | null; buyPrice: number; sellPrice: number }>;
+      items: Array<{
+        typeId: number;
+        sourceAsk: number | null;
+        buyPrice: number;
+        sellPrice: number;
+        sourceTickMatched: boolean;
+        destTickMatched: boolean;
+      }>;
     }>('/api/arbitrage/opportunities?mode=buy_to_buy&sourceHub=jita&hideAnomalies=false');
     const bidOnlyOpp = buyToBuyBidOnly.body.items.find((o) => o.typeId === 2002);
     assert.ok(bidOnlyOpp);
     assert.equal(bidOnlyOpp.sourceAsk, null);
     assert.equal(bidOnlyOpp.buyPrice, 500_100);
     assert.equal(bidOnlyOpp.sellPrice, 900_000);
+    assert.equal(bidOnlyOpp.sourceTickMatched, false);
+    assert.equal(bidOnlyOpp.destTickMatched, false);
+
+    // 1-tick tight spread item at both source and dest serializes sourceTickMatched / destTickMatched
+    db.prepare(`
+      INSERT OR REPLACE INTO item_types (type_id, name, market_group_id, root_group_id, root_group_name, volume, published)
+      VALUES (2003, 'Tight Spread Module', 9, 9, 'Ship Equipment', 5, 1)
+    `).run();
+    db.prepare(`
+      INSERT OR REPLACE INTO market_summary (
+        hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+        bid_volume, ask_volume, buy_order_count, sell_order_count,
+        top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+      ) VALUES ('jita', 2003, 999900, 1000000, 999900, 1, 25, 25, 2, 2, 1, 1, 0, 1, ?)
+    `).run(now);
+    db.prepare(`
+      INSERT OR REPLACE INTO market_summary (
+        hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+        bid_volume, ask_volume, buy_order_count, sell_order_count,
+        top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+      ) VALUES ('amarr', 2003, 1299000, 1300000, 1299000, 1, 25, 25, 2, 2, 1, 1, 0, 1, ?)
+    `).run(now);
+
+    const tightRoute = await requestJson<{
+      items: Array<{
+        typeId: number;
+        buyPrice: number;
+        sellPrice: number;
+        sourceTickMatched: boolean;
+        destTickMatched: boolean;
+      }>;
+    }>('/api/arbitrage/opportunities?mode=buy_to_sell&sourceHub=jita&destHub=amarr&hideAnomalies=false');
+    const tightOpp = tightRoute.body.items.find((o) => o.typeId === 2003);
+    assert.ok(tightOpp);
+    assert.equal(tightOpp.buyPrice, 999_900);
+    assert.equal(tightOpp.sellPrice, 1_300_000);
+    assert.equal(tightOpp.sourceTickMatched, true);
+    assert.equal(tightOpp.destTickMatched, true);
+  });
+
+  it('adds and backfills top_bid_volume and top_ask_volume on existing multi-hub DBs', () => {
+    const preDepthPath = path.join(tmpDir, 'pre-top-depth.db');
+    const pre = new DatabaseSync(preDepthPath);
+    pre.exec(`
+      CREATE TABLE hub_orders (
+        hub_id TEXT NOT NULL,
+        order_id INTEGER NOT NULL,
+        type_id INTEGER NOT NULL,
+        location_id INTEGER,
+        is_buy_order INTEGER NOT NULL,
+        price REAL NOT NULL,
+        volume_remain INTEGER NOT NULL,
+        volume_total INTEGER NOT NULL,
+        min_volume INTEGER NOT NULL,
+        duration INTEGER NOT NULL,
+        issued TEXT NOT NULL,
+        PRIMARY KEY (hub_id, order_id)
+      );
+      CREATE TABLE market_summary (
+        hub_id TEXT NOT NULL DEFAULT 'jita',
+        type_id INTEGER NOT NULL,
+        best_bid REAL,
+        best_ask REAL,
+        raw_best_bid REAL,
+        bid_min_volume INTEGER DEFAULT 1,
+        bid_volume INTEGER DEFAULT 0,
+        ask_volume INTEGER DEFAULT 0,
+        buy_order_count INTEGER DEFAULT 0,
+        sell_order_count INTEGER DEFAULT 0,
+        top_buy_competition INTEGER DEFAULT 0,
+        top_sell_competition INTEGER DEFAULT 0,
+        recent_updates_1h INTEGER DEFAULT 0,
+        recent_updates_24h INTEGER DEFAULT 0,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY (hub_id, type_id)
+      );
+
+      INSERT INTO market_summary VALUES (
+        'amarr', 40520, 687400000, 734300000, 687400000, 1,
+        1001174, 824, 28, 136, 2, 10, 0, 5, '2026-11-25T00:00:00Z'
+      );
+      INSERT INTO hub_orders VALUES
+        ('amarr', 1, 40520, 60008494, 1, 687400000, 48, 48, 1, 90, '2026-11-25T00:00:00Z'),
+        ('amarr', 2, 40520, 60008494, 1, 0.04, 1000000, 1000000, 1, 90, '2026-11-25T00:00:00Z'),
+        ('amarr', 3, 40520, 60008494, 0, 734300000, 240, 240, 1, 90, '2026-11-25T00:00:00Z'),
+        ('amarr', 4, 40520, 60008494, 0, 777100000, 584, 584, 1, 90, '2026-11-25T00:00:00Z');
+    `);
+    pre.close();
+
+    const upgraded = initDatabase(preDepthPath);
+    try {
+      const row = upgraded
+        .prepare("SELECT top_bid_volume, top_ask_volume FROM market_summary WHERE hub_id = 'amarr' AND type_id = 40520")
+        .get() as { top_bid_volume: number; top_ask_volume: number };
+      assert.equal(row.top_bid_volume, 48);
+      assert.equal(row.top_ask_volume, 240);
+    } finally {
+      upgraded.close();
+    }
   });
 });

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { matchOrderToHubs } from '../../config/hubs.js';
+import { aggregateHubSummaries, type EsiMarketOrder } from '../orderSync.js';
 import {
   computeArbitrageOpportunity,
   computeArbitrageRoiStats,
@@ -433,6 +434,246 @@ describe('Inter-hub arbitrage analytics', () => {
     ]);
     assert.equal(allAnomalous.medianRoiPct, 45);
     assert.equal(allAnomalous.avgRoiPct, 45);
+  });
+
+  it('matches best_bid / best_ask instead of crossing the spread on 1-tick tight spreads', () => {
+    // 1-tick source spread: 999,900 bid / 1,000,000 ask (+1 tick would cross 1,000,000 ask)
+    const tightSource = makeHubRow({
+      hub_id: 'jita',
+      type_id: 1006,
+      name: '1-Tick Spread Module',
+      volume: 5,
+      best_bid: 999_900,
+      best_ask: 1_000_000,
+      bid_volume: 50,
+      ask_volume: 50,
+    });
+    // 1-tick dest spread: 1,299,000 bid / 1,300,000 ask (-1 tick would cross 1,299,000 bid)
+    const tightDest = makeHubRow({
+      hub_id: 'amarr',
+      type_id: 1006,
+      name: '1-Tick Spread Module',
+      volume: 5,
+      best_bid: 1_299_000,
+      best_ask: 1_300_000,
+      bid_volume: 50,
+      ask_volume: 50,
+    });
+
+    const buyToBuy = computeArbitrageOpportunity({
+      source: tightSource,
+      dest: tightDest,
+      mode: 'buy_to_buy',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(buyToBuy);
+    assert.equal(buyToBuy.sourceTickMatched, true);
+    assert.equal(buyToBuy.destTickMatched, false);
+    assert.equal(buyToBuy.buyPrice, 999_900);
+    assert.equal(buyToBuy.sellPrice, 1_299_000);
+
+    const buyToSellTight = computeArbitrageOpportunity({
+      source: tightSource,
+      dest: tightDest,
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(buyToSellTight);
+    assert.equal(buyToSellTight.sourceTickMatched, true);
+    assert.equal(buyToSellTight.destTickMatched, true);
+    assert.equal(buyToSellTight.buyPrice, 999_900);
+    assert.equal(buyToSellTight.sellPrice, 1_300_000);
+
+    const relistTight = computeArbitrageOpportunity({
+      source: tightSource,
+      dest: tightDest,
+      mode: 'relist',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(relistTight);
+    assert.equal(relistTight.sourceTickMatched, false);
+    assert.equal(relistTight.destTickMatched, true);
+    assert.equal(relistTight.buyPrice, 1_000_000);
+    assert.equal(relistTight.sellPrice, 1_300_000);
+
+    // Wide spread behaves with normal +1T / -1T stepping and flags false
+    const wide = computeArbitrageOpportunity({
+      source: { ...tightSource, best_bid: 990_000 },
+      dest: { ...tightDest, best_bid: 1_200_000 },
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(wide);
+    assert.equal(wide.sourceTickMatched, false);
+    assert.equal(wide.destTickMatched, false);
+    assert.equal(wide.buyPrice, 990_100);
+    assert.equal(wide.sellPrice, 1_299_000);
+  });
+
+  it('computes near-top-of-book top_bid_volume and top_ask_volume while ignoring deep troll orders', () => {
+    const nowMs = Date.parse('2026-11-25T12:00:00Z');
+    const orders: EsiMarketOrder[] = [
+      // Best 1-unit buy @ 100M (qty 10) + near-top buy @ 98.5M (qty 5)
+      {
+        order_id: 1,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: true,
+        price: 100_000_000,
+        volume_remain: 10,
+        volume_total: 10,
+        min_volume: 1,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+      {
+        order_id: 2,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: true,
+        price: 98_500_000,
+        volume_remain: 5,
+        volume_total: 5,
+        min_volume: 1,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+      // Min-volume trap buy order @ 102M (min_volume > 1) excluded from top_bid_volume when 1-unit bid exists
+      {
+        order_id: 3,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: true,
+        price: 102_000_000,
+        volume_remain: 50,
+        volume_total: 50,
+        min_volume: 5,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+      // Deep 0.04 ISK troll buy order (qty 1,000,000) included in aggregate bid_volume, excluded from top_bid_volume
+      {
+        order_id: 4,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: true,
+        price: 0.04,
+        volume_remain: 1_000_000,
+        volume_total: 1_000_000,
+        min_volume: 1,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+      // Best sell @ 120M (qty 8) + near-top sell @ 122M (qty 4) + far-above sell @ 200M (qty 500)
+      {
+        order_id: 5,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: false,
+        price: 120_000_000,
+        volume_remain: 8,
+        volume_total: 8,
+        min_volume: 1,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+      {
+        order_id: 6,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: false,
+        price: 122_000_000,
+        volume_remain: 4,
+        volume_total: 4,
+        min_volume: 1,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+      {
+        order_id: 7,
+        type_id: 40520,
+        location_id: 60003760,
+        is_buy_order: false,
+        price: 200_000_000,
+        volume_remain: 500,
+        volume_total: 500,
+        min_volume: 1,
+        duration: 90,
+        issued: '2026-11-25T11:30:00Z',
+      },
+    ];
+
+    const [summary] = aggregateHubSummaries(orders, nowMs);
+    assert.ok(summary);
+    assert.equal(summary.best_bid, 100_000_000);
+    assert.equal(summary.bid_volume, 1_000_065);
+    assert.equal(summary.top_bid_volume, 15);
+    assert.equal(summary.best_ask, 120_000_000);
+    assert.equal(summary.ask_volume, 512);
+    assert.equal(summary.top_ask_volume, 12);
+
+    // Arbitrage uses top_bid_volume / top_ask_volume instead of aggregate bid_volume / ask_volume
+    const sourceRow = makeHubRow({
+      hub_id: 'amarr',
+      type_id: 40520,
+      name: 'Large Skill Injector',
+      volume: 0.01,
+      best_bid: 687_400_000,
+      bid_volume: 1_001_174,
+      top_bid_volume: 48,
+      best_ask: 734_300_000,
+      ask_volume: 824,
+      top_ask_volume: 240,
+    });
+    const destRow = makeHubRow({
+      hub_id: 'amamake',
+      type_id: 40520,
+      name: 'Large Skill Injector',
+      volume: 0.01,
+      best_bid: 750_000_000,
+      bid_volume: 500,
+      top_bid_volume: 20,
+      best_ask: 850_000_000,
+      ask_volume: 14,
+      top_ask_volume: 1,
+    });
+
+    const buyToSell = computeArbitrageOpportunity({
+      source: sourceRow,
+      dest: destRow,
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(buyToSell);
+    assert.equal(buyToSell.availableUnits, 48);
+    assert.equal(buyToSell.haulUnits, 48);
+
+    const buyToBuy = computeArbitrageOpportunity({
+      source: sourceRow,
+      dest: destRow,
+      mode: 'buy_to_buy',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(buyToBuy);
+    assert.equal(buyToBuy.availableUnits, 20);
+    assert.equal(buyToBuy.haulUnits, 20);
+
+    const relist = computeArbitrageOpportunity({
+      source: sourceRow,
+      dest: destRow,
+      mode: 'relist',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(relist);
+    assert.equal(relist.availableUnits, 240);
+    assert.equal(relist.haulUnits, 240);
   });
 
   it('matches local orders cleanly for both Rens station and Amamake NPC stations', () => {
