@@ -42,6 +42,7 @@ function isLocalOrigin(rawUrl) {
 
 async function createWindow() {
   process.env.NODE_ENV = 'production';
+  process.env.JITA_APP_VERSION = app.getVersion();
   process.env.JITA_DATA_DIR = path.join(app.getPath('userData'), 'data');
   process.env.JITA_CLIENT_DIST_DIR = app.isPackaged
     ? path.join(process.resourcesPath, 'client-dist')

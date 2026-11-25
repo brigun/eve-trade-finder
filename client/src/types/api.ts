@@ -585,3 +585,18 @@ export interface ItemGameInfo {
   fetchedAt: string;
   cached: boolean;
 }
+
+export interface UpdateCheckResponse {
+  status: 'ok' | 'error';
+  currentVersion: string;
+  latestVersion: string | null;
+  updateAvailable: boolean;
+  releaseName: string | null;
+  releaseUrl: string;
+  publishedAt: string | null;
+  releaseNotes: string | null;
+  checkedAt: string;
+  cached: boolean;
+  source: 'github_api' | 'github_redirect' | 'none';
+  error?: string;
+}

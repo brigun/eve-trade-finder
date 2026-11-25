@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -5,6 +6,33 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 export const ROOT_DIR = path.resolve(__dirname, '../..');
+
+function readPackageVersion(filePath: string): string | null {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    const raw = fs.readFileSync(filePath, 'utf8');
+    const parsed = JSON.parse(raw) as { version?: unknown };
+    return typeof parsed.version === 'string' && parsed.version.trim()
+      ? parsed.version.trim()
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function resolveAppVersion(): string {
+  const fromEnv = process.env.JITA_APP_VERSION?.trim();
+  if (fromEnv) return fromEnv;
+  return (
+    readPackageVersion(path.join(ROOT_DIR, 'package.json')) ??
+    readPackageVersion(path.join(ROOT_DIR, 'server', 'package.json')) ??
+    '0.0.0'
+  );
+}
+
+export const APP_VERSION = resolveAppVersion();
+export const GITHUB_REPO = process.env.JITA_GITHUB_REPO?.trim() || 'brigun/eve-trade-finder';
+export const UPDATE_USER_AGENT = `JitaMonolithTradeTerminal/${APP_VERSION} (https://github.com/${GITHUB_REPO})`;
 export const DATA_DIR = process.env.JITA_DATA_DIR
   ? path.resolve(process.env.JITA_DATA_DIR)
   : path.join(ROOT_DIR, 'data');
