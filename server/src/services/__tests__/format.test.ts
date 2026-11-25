@@ -4,6 +4,7 @@ import {
   formatIntInput,
   formatIskInput,
   formatLiveNumericInput,
+  formatPct,
   formatShorthandInput,
   parseIskShorthand,
 } from '../../../../client/src/lib/format.ts';
@@ -34,5 +35,17 @@ describe('American comma input formatters', () => {
     assert.equal(parseIskShorthand('10m'), 10_000_000);
     assert.equal(parseIskShorthand('.5m'), 500_000);
     assert.equal(parseIskShorthand('.25b'), 250_000_000);
+  });
+
+  it('formats normal, signed, comma-separated, and compact extreme percentages', () => {
+    assert.equal(formatPct(null), '—');
+    assert.equal(formatPct(Number.NaN), '—');
+    assert.equal(formatPct(12.34), '12.3%');
+    assert.equal(formatPct(12.34, true), '+12.3%');
+    assert.equal(formatPct(-5.5), '-5.5%');
+    assert.equal(formatPct(1_250.5), '1,250.5%');
+    assert.equal(formatPct(12_500), '12.5K%');
+    assert.equal(formatPct(2_500_000), '2.5M%');
+    assert.equal(formatPct(1_500_000_000), '1.5B%');
   });
 });

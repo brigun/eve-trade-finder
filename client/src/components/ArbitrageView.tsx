@@ -621,8 +621,15 @@ export function ArbitrageView({
           <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C]">
             {getSummaryFeeLabel(displayMode, data?.fees)}
           </span>
-          <span className="font-mono-num text-sm font-semibold text-[#B298FF]">
-            Avg ROI {data ? formatPct(data.summaryStats.avgRoiPct) : '—'}
+          <span
+            title={
+              data
+                ? `Median ROI across matched routes: ${formatPct(data.summaryStats.medianRoiPct)} · Clean (non-anomalous) Avg ROI: ${formatPct(data.summaryStats.avgRoiPct)}`
+                : undefined
+            }
+            className="font-mono-num text-sm font-semibold text-[#B298FF]"
+          >
+            Median ROI {data ? formatPct(data.summaryStats.medianRoiPct) : '—'}
           </span>
         </div>
       </div>
@@ -783,7 +790,14 @@ export function ArbitrageView({
                           {formatIskCompact(opp.unitNetProfit, false)}
                         </td>
 
-                        <td className="px-3 py-2.5 text-right font-mono-num font-semibold text-[#46E595]">
+                        <td
+                          title={
+                            Math.abs(opp.roiPct) >= 10_000
+                              ? `${opp.roiPct.toLocaleString('en-US', { maximumFractionDigits: 1 })}%`
+                              : undefined
+                          }
+                          className="px-3 py-2.5 text-right font-mono-num font-semibold text-[#46E595]"
+                        >
                           {formatPct(opp.roiPct)}
                         </td>
 

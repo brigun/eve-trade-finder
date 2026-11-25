@@ -294,6 +294,10 @@ describe('Multi-hub SQLite migration and API routes', () => {
 
     const buyToSell = await requestJson<{
       mode: string;
+      summaryStats: {
+        medianRoiPct: number;
+        avgRoiPct: number;
+      };
       items: Array<{
         typeId: number;
         mode: string;
@@ -305,6 +309,9 @@ describe('Multi-hub SQLite migration and API routes', () => {
     }>('/api/arbitrage/opportunities?mode=buy_to_sell&sourceHub=jita&hideAnomalies=false');
     assert.equal(buyToSell.status, 200);
     assert.equal(buyToSell.body.mode, 'buy_to_sell');
+    assert.ok(Number.isFinite(buyToSell.body.summaryStats.medianRoiPct));
+    assert.ok(buyToSell.body.summaryStats.medianRoiPct > 0);
+    assert.ok(Number.isFinite(buyToSell.body.summaryStats.avgRoiPct));
     const amarrBuyToSell = buyToSell.body.items.find((o) => o.typeId === 2001 && o.destHubId === 'amarr');
     assert.ok(amarrBuyToSell);
     assert.equal(amarrBuyToSell.mode, 'buy_to_sell');

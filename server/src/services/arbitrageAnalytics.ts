@@ -386,3 +386,31 @@ export function filterAndSortArbitrage(
 
   return filtered;
 }
+
+export function computeArbitrageRoiStats(
+  opportunities: ReadonlyArray<Pick<ArbitrageOpportunity, 'roiPct' | 'hasAnomaly'>>,
+): { medianRoiPct: number; avgRoiPct: number } {
+  const rois = opportunities
+    .map((opp) => opp.roiPct)
+    .filter((roi) => Number.isFinite(roi))
+    .sort((a, b) => a - b);
+
+  if (rois.length === 0) {
+    return { medianRoiPct: 0, avgRoiPct: 0 };
+  }
+
+  const mid = Math.floor(rois.length / 2);
+  const medianRoiPct =
+    rois.length % 2 === 1 ? rois[mid] : (rois[mid - 1] + rois[mid]) / 2;
+
+  const cleanRois = opportunities
+    .filter((opp) => !opp.hasAnomaly && Number.isFinite(opp.roiPct))
+    .map((opp) => opp.roiPct);
+
+  const avgRoiPct =
+    cleanRois.length > 0
+      ? cleanRois.reduce((acc, roi) => acc + roi, 0) / cleanRois.length
+      : medianRoiPct;
+
+  return { medianRoiPct, avgRoiPct };
+}

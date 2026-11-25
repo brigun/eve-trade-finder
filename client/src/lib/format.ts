@@ -33,10 +33,29 @@ export function formatUnitsCompact(val: number | null | undefined): string {
   return val.toFixed(1);
 }
 
+const PCT_COMPACT_TIERS: ReadonlyArray<[number, number, string]> = [
+  [1_000_000_000_000, 1_000_000_000_000, 'T'],
+  [1_000_000_000, 1_000_000_000, 'B'],
+  [1_000_000, 1_000_000, 'M'],
+  [10_000, 1_000, 'K'],
+];
+
 export function formatPct(val: number | null | undefined, showSign = false): string {
   if (val === null || val === undefined || !Number.isFinite(val)) return '—';
-  const sign = showSign && val > 0 ? '+' : '';
-  return `${sign}${val.toFixed(1)}%`;
+  const sign = showSign && val > 0 ? '+' : val < 0 ? '-' : '';
+  const abs = Math.abs(val);
+  for (const [threshold, divisor, suffix] of PCT_COMPACT_TIERS) {
+    if (abs >= threshold) {
+      return `${sign}${(abs / divisor).toFixed(1)}${suffix}%`;
+    }
+  }
+  if (abs >= 1_000) {
+    return `${sign}${abs.toLocaleString('en-US', {
+      minimumFractionDigits: 1,
+      maximumFractionDigits: 1,
+    })}%`;
+  }
+  return `${sign}${abs.toFixed(1)}%`;
 }
 
 export function parseIskShorthand(raw: string): number | null {

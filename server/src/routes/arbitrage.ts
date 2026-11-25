@@ -3,6 +3,7 @@ import { getHubById, isHubId, type HubId } from '../config.js';
 import { getDb } from '../db/database.js';
 import {
   computeArbitrageOpportunity,
+  computeArbitrageRoiStats,
   filterAndSortArbitrage,
   hasEligibleArbitrageSource,
   parseArbitrageMode,
@@ -221,10 +222,7 @@ arbitrageRouter.get('/opportunities', (req, res) => {
     matched.length > 0
       ? matched.reduce((max, cur) => (cur.totalNetProfit > max ? cur.totalNetProfit : max), 0)
       : 0;
-  const avgRoiPct =
-    matched.length > 0
-      ? matched.reduce((acc, cur) => acc + cur.roiPct, 0) / matched.length
-      : 0;
+  const { medianRoiPct, avgRoiPct } = computeArbitrageRoiStats(matched);
 
   const hubs = getHubSyncFreshness();
   const syncedHubsCount = hubs.filter((h) => h.twoSidedItems > 0 || h.totalOrders > 0).length;
@@ -240,6 +238,7 @@ arbitrageRouter.get('/opportunities', (req, res) => {
     summaryStats: {
       totalMatched: total,
       bestHaulProfit,
+      medianRoiPct,
       avgRoiPct,
       syncedHubsCount,
     },
