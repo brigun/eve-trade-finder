@@ -4,6 +4,8 @@ import { matchOrderToHubs } from '../../config/hubs.js';
 import {
   computeArbitrageOpportunity,
   filterAndSortArbitrage,
+  hasEligibleArbitrageSource,
+  parseArbitrageMode,
   type ArbitrageFilterCriteria,
   type ArbitrageHubRow,
 } from '../arbitrageAnalytics.js';
@@ -198,6 +200,214 @@ describe('Inter-hub arbitrage analytics', () => {
     });
     assert.equal(withLowSec.length, 2);
     assert.equal(withLowSec[0].destHubId, 'amamake');
+  });
+
+  it('parses all 4 arbitrage pairing modes and legacy aliases safely', () => {
+    assert.equal(parseArbitrageMode('instant'), 'instant');
+    assert.equal(parseArbitrageMode('sell_to_buy'), 'instant');
+    assert.equal(parseArbitrageMode('relist'), 'relist');
+    assert.equal(parseArbitrageMode('sell_to_sell'), 'relist');
+    assert.equal(parseArbitrageMode('buy_to_buy'), 'buy_to_buy');
+    assert.equal(parseArbitrageMode(' BUY_TO_SELL '), 'buy_to_sell');
+    assert.equal(parseArbitrageMode(undefined), 'instant');
+    assert.equal(parseArbitrageMode('unknown'), 'instant');
+  });
+
+  it('computes Bid -> Instant (Buy -> Buy) with source +1 tick, source broker fee, and dest sales tax', () => {
+    const jitaSource = makeHubRow({
+      hub_id: 'jita',
+      type_id: 1004,
+      name: 'Shield Boost Amplifier II',
+      volume: 5,
+      best_bid: 1_000_000,
+      best_ask: null,
+      ask_volume: 0,
+      sell_order_count: 0,
+      bid_volume: 300,
+      buy_order_count: 5,
+      dest_avg_price_30d: 1_100_000,
+      dest_active_days_30d: 30,
+    });
+    const amarrDest = makeHubRow({
+      hub_id: 'amarr',
+      type_id: 1004,
+      name: 'Shield Boost Amplifier II',
+      volume: 5,
+      best_bid: 1_200_000,
+      bid_volume: 80,
+      bid_min_volume: 1,
+    });
+
+    const opp = computeArbitrageOpportunity({
+      source: jitaSource,
+      dest: amarrDest,
+      mode: 'buy_to_buy',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+
+    assert.ok(opp);
+    assert.equal(opp.mode, 'buy_to_buy');
+    assert.equal(opp.sourceBid, 1_000_000);
+    assert.equal(opp.sourceAsk, null);
+    // 1,000,000 + 1 EVE tick = 1,001,000; * (1 + 0.03) = 1,031,030
+    assert.equal(opp.buyPrice, 1_001_000);
+    assert.equal(Math.round(opp.unitBuyCost), 1_031_030);
+    assert.equal(opp.sellPrice, 1_200_000);
+    assert.equal(Math.round(opp.unitSellProceeds), 1_110_000);
+    assert.equal(Math.round(opp.unitNetProfit), 78_970);
+    assert.equal(opp.availableUnits, 80);
+    assert.equal(opp.haulUnits, 80);
+    assert.equal(opp.hasAnomaly, false);
+
+    // Cargo-capping (< availableUnits)
+    const cargoCapped = computeArbitrageOpportunity({
+      source: jitaSource,
+      dest: amarrDest,
+      mode: 'buy_to_buy',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 100, // 100 / 5 = 20 units (< 80 dest bid_volume)
+    });
+    assert.ok(cargoCapped);
+    assert.equal(cargoCapped.availableUnits, 80);
+    assert.equal(cargoCapped.haulUnits, 20);
+    assert.equal(cargoCapped.totalVolumeM3, 100);
+
+    // Null guards for missing/zero source or destination legs
+    assert.equal(
+      hasEligibleArbitrageSource({ ...jitaSource, best_bid: null }, 'buy_to_buy'),
+      false,
+    );
+    assert.equal(
+      hasEligibleArbitrageSource({ ...jitaSource, buy_order_count: 0 }, 'buy_to_buy'),
+      false,
+    );
+    assert.equal(
+      computeArbitrageOpportunity({
+        source: { ...jitaSource, best_bid: null },
+        dest: amarrDest,
+        mode: 'buy_to_buy',
+        fees: DEFAULT_FEES,
+        maxCargoM3: 10_000,
+      }),
+      null,
+    );
+    assert.equal(
+      computeArbitrageOpportunity({
+        source: { ...jitaSource, buy_order_count: 0 },
+        dest: amarrDest,
+        mode: 'buy_to_buy',
+        fees: DEFAULT_FEES,
+        maxCargoM3: 10_000,
+      }),
+      null,
+    );
+    assert.equal(
+      computeArbitrageOpportunity({
+        source: jitaSource,
+        dest: { ...amarrDest, best_bid: null },
+        mode: 'buy_to_buy',
+        fees: DEFAULT_FEES,
+        maxCargoM3: 10_000,
+      }),
+      null,
+    );
+
+    // Flags MIN_VOL_TRAP on dest and DEPRESSED_BID on source
+    const risky = computeArbitrageOpportunity({
+      source: { ...jitaSource, best_bid: 500_000 },
+      dest: { ...amarrDest, bid_min_volume: 5 },
+      mode: 'buy_to_buy',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(risky);
+    assert.ok(risky.anomalies.some((a) => a.code === 'MIN_VOL_TRAP'));
+    assert.ok(risky.anomalies.some((a) => a.code === 'DEPRESSED_BID'));
+  });
+
+  it('computes Bid -> Relist (Buy -> Sell) with +1/-1 ticks, double broker fee, and source/dest anomalies', () => {
+    const jitaSource = makeHubRow({
+      hub_id: 'jita',
+      type_id: 1005,
+      name: 'Warp Scrambler II',
+      volume: 5,
+      best_bid: 1_000_000,
+      best_ask: null,
+      ask_volume: 0,
+      sell_order_count: 0,
+      bid_volume: 60,
+      buy_order_count: 4,
+      dest_avg_price_30d: 1_050_000,
+      dest_active_days_30d: 25,
+    });
+    const dodixieDest = makeHubRow({
+      hub_id: 'dodixie',
+      type_id: 1005,
+      name: 'Warp Scrambler II',
+      volume: 5,
+      best_ask: 1_300_000,
+      sell_order_count: 3,
+      dest_avg_price_30d: 1_250_000,
+      dest_active_days_30d: 20,
+    });
+
+    const opp = computeArbitrageOpportunity({
+      source: jitaSource,
+      dest: dodixieDest,
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+
+    assert.ok(opp);
+    assert.equal(opp.mode, 'buy_to_sell');
+    assert.equal(opp.buyPrice, 1_001_000);
+    assert.equal(Math.round(opp.unitBuyCost), 1_031_030);
+    assert.equal(opp.sellPrice, 1_299_000);
+    assert.equal(Math.round(opp.unitSellProceeds), 1_162_605);
+    assert.equal(Math.round(opp.unitNetProfit), 131_575);
+    assert.equal(opp.availableUnits, 60);
+    assert.equal(opp.haulUnits, 60);
+    assert.equal(opp.hasAnomaly, false);
+
+    // Cargo-capping (< source.bid_volume) and null-leg rejection
+    const cargoCappedSell = computeArbitrageOpportunity({
+      source: jitaSource,
+      dest: dodixieDest,
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 75, // 75 / 5 = 15 units (< 60 source bid_volume)
+    });
+    assert.ok(cargoCappedSell);
+    assert.equal(cargoCappedSell.availableUnits, 60);
+    assert.equal(cargoCappedSell.haulUnits, 15);
+    assert.equal(cargoCappedSell.totalVolumeM3, 75);
+    assert.equal(
+      computeArbitrageOpportunity({
+        source: jitaSource,
+        dest: { ...dodixieDest, best_ask: null },
+        mode: 'buy_to_sell',
+        fees: DEFAULT_FEES,
+        maxCargoM3: 10_000,
+      }),
+      null,
+    );
+
+    // Flags SINGLE_SELLER, INFLATED_ASK, DEPRESSED_BID, and LOW_HISTORY
+    const risky = computeArbitrageOpportunity({
+      source: { ...jitaSource, best_bid: 400_000, dest_active_days_30d: 2 },
+      dest: { ...dodixieDest, sell_order_count: 1, best_ask: 2_500_000, dest_active_days_30d: 3 },
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(risky);
+    const codes = new Set(risky.anomalies.map((a) => a.code));
+    assert.ok(codes.has('SINGLE_SELLER'));
+    assert.ok(codes.has('INFLATED_ASK'));
+    assert.ok(codes.has('DEPRESSED_BID'));
+    assert.ok(codes.has('LOW_HISTORY'));
   });
 
   it('matches local orders cleanly for both Rens station and Amamake NPC stations', () => {

@@ -4,6 +4,8 @@ import { getDb } from '../db/database.js';
 import {
   computeArbitrageOpportunity,
   filterAndSortArbitrage,
+  hasEligibleArbitrageSource,
+  parseArbitrageMode,
   type ArbitrageFilterCriteria,
   type ArbitrageHubRow,
   type ArbitrageMode,
@@ -73,7 +75,7 @@ arbitrageRouter.get('/opportunities', (req, res) => {
   const db = getDb();
   const fees = getFeeConfig();
 
-  const mode: ArbitrageMode = req.query.mode === 'relist' ? 'relist' : 'instant';
+  const mode: ArbitrageMode = parseArbitrageMode(req.query.mode);
   const sourceHub = parseHubOrAny(req.query.sourceHub);
   const destHub = parseHubOrAny(req.query.destHub);
   const maxCargoM3 = parseOptionalNumber(req.query.maxCargoM3);
@@ -187,7 +189,7 @@ arbitrageRouter.get('/opportunities', (req, res) => {
     for (let i = 0; i < hubRows.length; i++) {
       const src = hubRows[i];
       if (sourceHub !== 'any' && src.hub_id !== sourceHub) continue;
-      if (src.best_ask === null || src.best_ask <= 0 || src.ask_volume <= 0) continue;
+      if (!hasEligibleArbitrageSource(src, mode)) continue;
 
       for (let j = 0; j < hubRows.length; j++) {
         if (i === j) continue;

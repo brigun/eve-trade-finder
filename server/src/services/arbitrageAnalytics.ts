@@ -5,7 +5,35 @@ import {
   type FeeConfig,
 } from './tradeAnalytics.js';
 
-export type ArbitrageMode = 'instant' | 'relist';
+export type ArbitrageMode = 'instant' | 'relist' | 'buy_to_buy' | 'buy_to_sell';
+
+export function parseArbitrageMode(val: unknown): ArbitrageMode {
+  if (typeof val !== 'string') return 'instant';
+  const normalized = val.trim().toLowerCase();
+  if (normalized === 'relist' || normalized === 'sell_to_sell') return 'relist';
+  if (normalized === 'buy_to_buy') return 'buy_to_buy';
+  if (normalized === 'buy_to_sell') return 'buy_to_sell';
+  return 'instant';
+}
+
+export function isSourceBuyOrderMode(mode: ArbitrageMode): boolean {
+  return mode === 'buy_to_buy' || mode === 'buy_to_sell';
+}
+
+export function hasEligibleArbitrageSource(
+  row: Pick<ArbitrageHubRow, 'best_bid' | 'best_ask' | 'bid_volume' | 'ask_volume' | 'buy_order_count'>,
+  mode: ArbitrageMode,
+): boolean {
+  if (isSourceBuyOrderMode(mode)) {
+    return (
+      row.best_bid !== null &&
+      row.best_bid > 0 &&
+      row.bid_volume > 0 &&
+      row.buy_order_count > 0
+    );
+  }
+  return row.best_ask !== null && row.best_ask > 0 && row.ask_volume > 0;
+}
 
 export interface ArbitrageHubRow {
   hub_id: HubId;
@@ -22,6 +50,7 @@ export interface ArbitrageHubRow {
   ask_volume: number;
   buy_order_count: number;
   sell_order_count: number;
+  // Hub-level regional history metrics (named dest_* for backwards compatibility; populated for both source and dest rows)
   dest_daily_volume_7d: number | null;
   dest_avg_price_30d: number | null;
   dest_active_days_30d: number | null;
@@ -38,7 +67,8 @@ export interface ArbitrageOpportunity {
   sourceHubName: string;
   destHubId: HubId;
   destHubName: string;
-  sourceAsk: number;
+  sourceBid: number | null;
+  sourceAsk: number | null;
   destBid: number | null;
   destAsk: number | null;
   buyPrice: number;
@@ -94,28 +124,45 @@ export function computeArbitrageOpportunity(params: {
 }): ArbitrageOpportunity | null {
   const { source, dest, mode, fees, maxCargoM3 } = params;
   if (source.hub_id === dest.hub_id) return null;
-  if (source.best_ask === null || source.best_ask <= 0 || source.ask_volume <= 0) return null;
+  if (!hasEligibleArbitrageSource(source, mode)) return null;
+
+  const usesSourceBuyOrder = isSourceBuyOrderMode(mode);
+  const usesDestSellOrder = mode === 'relist' || mode === 'buy_to_sell';
 
   const brokerRate = fees.brokerFeePct / 100;
   const salesTaxRate = fees.salesTaxPct / 100;
 
-  const buyPrice = source.best_ask;
-  const unitBuyCost = buyPrice; // Buying from existing source sell order incurs 0% broker fee
+  let buyPrice: number;
+  let unitBuyCost: number;
+  if (!usesSourceBuyOrder) {
+    buyPrice = source.best_ask as number;
+    unitBuyCost = buyPrice; // Buying from existing source sell order incurs 0% broker fee
+  } else {
+    buyPrice = nextEveTick(source.best_bid as number, 'up');
+    unitBuyCost = buyPrice * (1 + brokerRate); // Placing source buy order incurs source broker fee
+  }
 
   let sellPrice: number;
   let unitSellProceeds: number;
-  let availableUnits: number;
-
-  if (mode === 'instant') {
+  if (!usesDestSellOrder) {
     if (dest.best_bid === null || dest.best_bid <= 0 || dest.bid_volume <= 0) return null;
     sellPrice = dest.best_bid;
     unitSellProceeds = sellPrice * (1 - salesTaxRate); // Dumping into existing buy order pays sales tax only
-    availableUnits = Math.min(source.ask_volume, dest.bid_volume);
   } else {
     if (dest.best_ask === null || dest.best_ask <= 0 || dest.sell_order_count <= 0) return null;
     sellPrice = nextEveTick(dest.best_ask, 'down');
     unitSellProceeds = sellPrice * (1 - brokerRate - salesTaxRate);
+  }
+
+  let availableUnits: number;
+  if (mode === 'instant') {
+    availableUnits = Math.min(source.ask_volume, dest.bid_volume);
+  } else if (mode === 'relist') {
     availableUnits = source.ask_volume;
+  } else if (mode === 'buy_to_buy') {
+    availableUnits = dest.bid_volume;
+  } else {
+    availableUnits = source.bid_volume;
   }
 
   const unitNetProfit = unitSellProceeds - unitBuyCost;
@@ -141,7 +188,7 @@ export function computeArbitrageOpportunity(params: {
   const iskPerJump = route.jumps > 0 ? totalNetProfit / route.jumps : totalNetProfit;
 
   const anomalies: AnomalyFlag[] = [];
-  if (mode === 'instant' && dest.bid_min_volume > 1) {
+  if (!usesDestSellOrder && dest.bid_min_volume > 1) {
     anomalies.push({
       code: 'MIN_VOL_TRAP',
       severity: 'high',
@@ -157,7 +204,32 @@ export function computeArbitrageOpportunity(params: {
       reason: 'Arbitrage ROI exceeds 150%; verify destination book depth and price history.',
     });
   }
-  if (mode === 'relist' && dest.sell_order_count === 1) {
+  if (usesSourceBuyOrder) {
+    const srcName = getHubById(source.hub_id).shortName;
+    if (
+      source.dest_avg_price_30d !== null &&
+      source.dest_avg_price_30d > 0 &&
+      source.best_bid !== null &&
+      source.best_bid < source.dest_avg_price_30d * 0.55
+    ) {
+      const ratioPct = Math.round((source.best_bid / source.dest_avg_price_30d) * 100);
+      anomalies.push({
+        code: 'DEPRESSED_BID',
+        severity: 'medium',
+        label: `Src Bid ${ratioPct}% of Avg`,
+        reason: `Source best bid at ${srcName} is only ${ratioPct}% of its 30-day regional average; buy order may fill slowly.`,
+      });
+    }
+    if (source.dest_active_days_30d !== null && source.dest_active_days_30d < 5) {
+      anomalies.push({
+        code: 'LOW_HISTORY',
+        severity: 'medium',
+        label: `${srcName} ${source.dest_active_days_30d}/30d`,
+        reason: `Low source regional volume at ${srcName} (${source.dest_active_days_30d} active days in last 30d); buy order may fill slowly.`,
+      });
+    }
+  }
+  if (usesDestSellOrder && dest.sell_order_count === 1) {
     anomalies.push({
       code: 'SINGLE_SELLER',
       severity: 'medium',
@@ -166,7 +238,7 @@ export function computeArbitrageOpportunity(params: {
     });
   }
   if (
-    mode === 'relist' &&
+    usesDestSellOrder &&
     dest.dest_avg_price_30d !== null &&
     dest.dest_avg_price_30d > 0 &&
     dest.best_ask !== null &&
@@ -181,7 +253,7 @@ export function computeArbitrageOpportunity(params: {
     });
   }
   if (
-    mode === 'relist' &&
+    usesDestSellOrder &&
     dest.dest_active_days_30d !== null &&
     dest.dest_active_days_30d < 5
   ) {
@@ -204,6 +276,7 @@ export function computeArbitrageOpportunity(params: {
     sourceHubName: getHubById(source.hub_id).shortName,
     destHubId: dest.hub_id,
     destHubName: getHubById(dest.hub_id).shortName,
+    sourceBid: source.best_bid,
     sourceAsk: source.best_ask,
     destBid: dest.best_bid,
     destAsk: dest.best_ask,
