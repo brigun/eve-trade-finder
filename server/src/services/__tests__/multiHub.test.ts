@@ -338,12 +338,57 @@ describe('Multi-hub SQLite migration and API routes', () => {
     assert.equal(instantBidOnly.body.items.some((o) => o.typeId === 2002), false);
 
     const buyToBuyBidOnly = await requestJson<{
-      items: Array<{ typeId: number; sourceAsk: number | null; buyPrice: number; sellPrice: number }>;
+      items: Array<{
+        typeId: number;
+        sourceAsk: number | null;
+        buyPrice: number;
+        sellPrice: number;
+        sourceTickMatched: boolean;
+        destTickMatched: boolean;
+      }>;
     }>('/api/arbitrage/opportunities?mode=buy_to_buy&sourceHub=jita&hideAnomalies=false');
     const bidOnlyOpp = buyToBuyBidOnly.body.items.find((o) => o.typeId === 2002);
     assert.ok(bidOnlyOpp);
     assert.equal(bidOnlyOpp.sourceAsk, null);
     assert.equal(bidOnlyOpp.buyPrice, 500_100);
     assert.equal(bidOnlyOpp.sellPrice, 900_000);
+    assert.equal(bidOnlyOpp.sourceTickMatched, false);
+    assert.equal(bidOnlyOpp.destTickMatched, false);
+
+    // 1-tick tight spread item at both source and dest serializes sourceTickMatched / destTickMatched
+    db.prepare(`
+      INSERT OR REPLACE INTO item_types (type_id, name, market_group_id, root_group_id, root_group_name, volume, published)
+      VALUES (2003, 'Tight Spread Module', 9, 9, 'Ship Equipment', 5, 1)
+    `).run();
+    db.prepare(`
+      INSERT OR REPLACE INTO market_summary (
+        hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+        bid_volume, ask_volume, buy_order_count, sell_order_count,
+        top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+      ) VALUES ('jita', 2003, 999900, 1000000, 999900, 1, 25, 25, 2, 2, 1, 1, 0, 1, ?)
+    `).run(now);
+    db.prepare(`
+      INSERT OR REPLACE INTO market_summary (
+        hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+        bid_volume, ask_volume, buy_order_count, sell_order_count,
+        top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+      ) VALUES ('amarr', 2003, 1299000, 1300000, 1299000, 1, 25, 25, 2, 2, 1, 1, 0, 1, ?)
+    `).run(now);
+
+    const tightRoute = await requestJson<{
+      items: Array<{
+        typeId: number;
+        buyPrice: number;
+        sellPrice: number;
+        sourceTickMatched: boolean;
+        destTickMatched: boolean;
+      }>;
+    }>('/api/arbitrage/opportunities?mode=buy_to_sell&sourceHub=jita&destHub=amarr&hideAnomalies=false');
+    const tightOpp = tightRoute.body.items.find((o) => o.typeId === 2003);
+    assert.ok(tightOpp);
+    assert.equal(tightOpp.buyPrice, 999_900);
+    assert.equal(tightOpp.sellPrice, 1_300_000);
+    assert.equal(tightOpp.sourceTickMatched, true);
+    assert.equal(tightOpp.destTickMatched, true);
   });
 });

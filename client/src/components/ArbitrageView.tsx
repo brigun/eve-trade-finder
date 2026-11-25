@@ -772,11 +772,27 @@ export function ArbitrageView({
                         </td>
 
                         <td className="px-3 py-2.5 text-right font-mono-num text-[#EFEAE0]">
-                          {formatIskExact(opp.buyPrice)}
+                          <div>{formatIskExact(opp.buyPrice)}</div>
+                          {opp.sourceTickMatched && (
+                            <div
+                              title="1-tick source spread: matches Source Best Bid instead of crossing Source Best Ask"
+                              className="text-[9px] text-[#F5B841]/90"
+                            >
+                              =BID
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-3 py-2.5 text-right font-mono-num text-[#9CA0B0]">
-                          {formatIskExact(opp.sellPrice)}
+                          <div>{formatIskExact(opp.sellPrice)}</div>
+                          {opp.destTickMatched && (
+                            <div
+                              title="1-tick destination spread: matches Dest Best Ask instead of crossing Dest Best Bid"
+                              className="text-[9px] text-[#B298FF]/90"
+                            >
+                              =ASK
+                            </div>
+                          )}
                         </td>
 
                         <td className="px-3 py-2.5 text-right font-mono-num text-[#46E595]">

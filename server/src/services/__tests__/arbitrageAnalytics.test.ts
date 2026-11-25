@@ -410,6 +410,84 @@ describe('Inter-hub arbitrage analytics', () => {
     assert.ok(codes.has('LOW_HISTORY'));
   });
 
+  it('matches best_bid / best_ask instead of crossing the spread on 1-tick tight spreads', () => {
+    // 1-tick source spread: 999,900 bid / 1,000,000 ask (+1 tick would cross 1,000,000 ask)
+    const tightSource = makeHubRow({
+      hub_id: 'jita',
+      type_id: 1006,
+      name: '1-Tick Spread Module',
+      volume: 5,
+      best_bid: 999_900,
+      best_ask: 1_000_000,
+      bid_volume: 50,
+      ask_volume: 50,
+    });
+    // 1-tick dest spread: 1,299,000 bid / 1,300,000 ask (-1 tick would cross 1,299,000 bid)
+    const tightDest = makeHubRow({
+      hub_id: 'amarr',
+      type_id: 1006,
+      name: '1-Tick Spread Module',
+      volume: 5,
+      best_bid: 1_299_000,
+      best_ask: 1_300_000,
+      bid_volume: 50,
+      ask_volume: 50,
+    });
+
+    const buyToBuy = computeArbitrageOpportunity({
+      source: tightSource,
+      dest: tightDest,
+      mode: 'buy_to_buy',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(buyToBuy);
+    assert.equal(buyToBuy.sourceTickMatched, true);
+    assert.equal(buyToBuy.destTickMatched, false);
+    assert.equal(buyToBuy.buyPrice, 999_900);
+    assert.equal(buyToBuy.sellPrice, 1_299_000);
+
+    const buyToSell = computeArbitrageOpportunity({
+      source: tightSource,
+      dest: tightDest,
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(buyToSell);
+    assert.equal(buyToSell.sourceTickMatched, true);
+    assert.equal(buyToSell.destTickMatched, true);
+    assert.equal(buyToSell.buyPrice, 999_900);
+    assert.equal(buyToSell.sellPrice, 1_300_000);
+
+    const relist = computeArbitrageOpportunity({
+      source: tightSource,
+      dest: tightDest,
+      mode: 'relist',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(relist);
+    assert.equal(relist.sourceTickMatched, false);
+    assert.equal(relist.destTickMatched, true);
+    assert.equal(relist.buyPrice, 1_000_000);
+    assert.equal(relist.sellPrice, 1_300_000);
+
+    // Wide spread behaves with normal +1T / -1T stepping and flags false
+    const wide = computeArbitrageOpportunity({
+      source: { ...tightSource, best_bid: 990_000 },
+      dest: { ...tightDest, best_bid: 1_200_000 },
+      mode: 'buy_to_sell',
+      fees: DEFAULT_FEES,
+      maxCargoM3: 10_000,
+    });
+    assert.ok(wide);
+    assert.equal(wide.sourceTickMatched, false);
+    assert.equal(wide.destTickMatched, false);
+    assert.equal(wide.buyPrice, 990_100);
+    assert.equal(wide.sellPrice, 1_299_000);
+  });
+
   it('matches local orders cleanly for both Rens station and Amamake NPC stations', () => {
     // Rens Brutor Tribe Treasury station order also matches system 30002510 (not Amamake)
     assert.deepEqual(matchOrderToHubs({ location_id: 60004588, system_id: 30002510 }), ['rens']);

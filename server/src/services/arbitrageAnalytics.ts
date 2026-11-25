@@ -73,6 +73,8 @@ export interface ArbitrageOpportunity {
   destAsk: number | null;
   buyPrice: number;
   sellPrice: number;
+  sourceTickMatched: boolean;
+  destTickMatched: boolean;
   unitBuyCost: number;
   unitSellProceeds: number;
   unitNetProfit: number;
@@ -134,23 +136,32 @@ export function computeArbitrageOpportunity(params: {
 
   let buyPrice: number;
   let unitBuyCost: number;
+  let sourceTickMatched = false;
   if (!usesSourceBuyOrder) {
     buyPrice = source.best_ask as number;
     unitBuyCost = buyPrice; // Buying from existing source sell order incurs 0% broker fee
   } else {
-    buyPrice = nextEveTick(source.best_bid as number, 'up');
+    const sourceBestBid = source.best_bid as number;
+    const tickedBuy = nextEveTick(sourceBestBid, 'up');
+    sourceTickMatched =
+      source.best_ask !== null && source.best_ask > 0 && tickedBuy >= source.best_ask;
+    buyPrice = sourceTickMatched ? sourceBestBid : tickedBuy;
     unitBuyCost = buyPrice * (1 + brokerRate); // Placing source buy order incurs source broker fee
   }
 
   let sellPrice: number;
   let unitSellProceeds: number;
+  let destTickMatched = false;
   if (!usesDestSellOrder) {
     if (dest.best_bid === null || dest.best_bid <= 0 || dest.bid_volume <= 0) return null;
     sellPrice = dest.best_bid;
     unitSellProceeds = sellPrice * (1 - salesTaxRate); // Dumping into existing buy order pays sales tax only
   } else {
     if (dest.best_ask === null || dest.best_ask <= 0 || dest.sell_order_count <= 0) return null;
-    sellPrice = nextEveTick(dest.best_ask, 'down');
+    const tickedSell = nextEveTick(dest.best_ask, 'down');
+    destTickMatched =
+      dest.best_bid !== null && dest.best_bid > 0 && tickedSell <= dest.best_bid;
+    sellPrice = destTickMatched ? dest.best_ask : tickedSell;
     unitSellProceeds = sellPrice * (1 - brokerRate - salesTaxRate);
   }
 
@@ -282,6 +293,8 @@ export function computeArbitrageOpportunity(params: {
     destAsk: dest.best_ask,
     buyPrice,
     sellPrice,
+    sourceTickMatched,
+    destTickMatched,
     unitBuyCost,
     unitSellProceeds,
     unitNetProfit,
