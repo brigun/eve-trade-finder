@@ -16,7 +16,7 @@ export interface TradeHubFreshness {
   totalOrders: number;
 }
 
-export type ArbitrageMode = 'instant' | 'relist';
+export type ArbitrageMode = 'instant' | 'relist' | 'buy_to_buy' | 'buy_to_sell';
 
 export interface ArbitrageFilterState {
   q: string;
@@ -53,7 +53,8 @@ export interface ArbitrageOpportunity {
   sourceHubName: string;
   destHubId: HubId;
   destHubName: string;
-  sourceAsk: number;
+  sourceBid: number | null;
+  sourceAsk: number | null;
   destBid: number | null;
   destAsk: number | null;
   buyPrice: number;

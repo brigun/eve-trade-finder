@@ -270,5 +270,80 @@ describe('Multi-hub SQLite migration and API routes', () => {
     }>('/api/arbitrage/opportunities?mode=instant&sourceHub=jita&hideLowSecRoutes=true&hideAnomalies=false');
     assert.equal(highSecOnly.body.items.some((o) => o.destHubId === 'amamake'), false);
     assert.ok(highSecOnly.body.items.some((o) => o.destHubId === 'amarr'));
+
+    // Buy -> Buy and Buy -> Sell pairing modes via HTTP route
+    const buyToBuy = await requestJson<{
+      mode: string;
+      items: Array<{
+        typeId: number;
+        mode: string;
+        destHubId: string;
+        buyPrice: number;
+        sellPrice: number;
+        totalNetProfit: number;
+      }>;
+    }>('/api/arbitrage/opportunities?mode=buy_to_buy&sourceHub=jita&hideAnomalies=false');
+    assert.equal(buyToBuy.status, 200);
+    assert.equal(buyToBuy.body.mode, 'buy_to_buy');
+    const amarrBuyToBuy = buyToBuy.body.items.find((o) => o.typeId === 2001 && o.destHubId === 'amarr');
+    assert.ok(amarrBuyToBuy);
+    assert.equal(amarrBuyToBuy.mode, 'buy_to_buy');
+    assert.equal(amarrBuyToBuy.buyPrice, 900_100);
+    assert.equal(amarrBuyToBuy.sellPrice, 1_400_000);
+    assert.ok(amarrBuyToBuy.totalNetProfit > 0);
+
+    const buyToSell = await requestJson<{
+      mode: string;
+      items: Array<{
+        typeId: number;
+        mode: string;
+        destHubId: string;
+        buyPrice: number;
+        sellPrice: number;
+        totalNetProfit: number;
+      }>;
+    }>('/api/arbitrage/opportunities?mode=buy_to_sell&sourceHub=jita&hideAnomalies=false');
+    assert.equal(buyToSell.status, 200);
+    assert.equal(buyToSell.body.mode, 'buy_to_sell');
+    const amarrBuyToSell = buyToSell.body.items.find((o) => o.typeId === 2001 && o.destHubId === 'amarr');
+    assert.ok(amarrBuyToSell);
+    assert.equal(amarrBuyToSell.mode, 'buy_to_sell');
+    assert.equal(amarrBuyToSell.buyPrice, 900_100);
+    assert.equal(amarrBuyToSell.sellPrice, 1_799_000);
+    assert.ok(amarrBuyToSell.totalNetProfit > 0);
+
+    // One-sided bid-only source item (best_ask = null) should appear in buy_to_buy, not instant
+    db.prepare(`
+      INSERT OR REPLACE INTO item_types (type_id, name, market_group_id, root_group_id, root_group_name, volume, published)
+      VALUES (2002, 'Bid-Only Source Module', 9, 9, 'Ship Equipment', 5, 1)
+    `).run();
+    db.prepare(`
+      INSERT OR REPLACE INTO market_summary (
+        hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+        bid_volume, ask_volume, buy_order_count, sell_order_count,
+        top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+      ) VALUES ('jita', 2002, 500000, NULL, 500000, 1, 25, 0, 2, 0, 1, 0, 0, 1, ?)
+    `).run(now);
+    db.prepare(`
+      INSERT OR REPLACE INTO market_summary (
+        hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
+        bid_volume, ask_volume, buy_order_count, sell_order_count,
+        top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
+      ) VALUES ('amarr', 2002, 900000, NULL, 900000, 1, 30, 0, 2, 0, 1, 0, 0, 1, ?)
+    `).run(now);
+
+    const instantBidOnly = await requestJson<{ items: Array<{ typeId: number }> }>(
+      '/api/arbitrage/opportunities?mode=instant&sourceHub=jita&hideAnomalies=false',
+    );
+    assert.equal(instantBidOnly.body.items.some((o) => o.typeId === 2002), false);
+
+    const buyToBuyBidOnly = await requestJson<{
+      items: Array<{ typeId: number; sourceAsk: number | null; buyPrice: number; sellPrice: number }>;
+    }>('/api/arbitrage/opportunities?mode=buy_to_buy&sourceHub=jita&hideAnomalies=false');
+    const bidOnlyOpp = buyToBuyBidOnly.body.items.find((o) => o.typeId === 2002);
+    assert.ok(bidOnlyOpp);
+    assert.equal(bidOnlyOpp.sourceAsk, null);
+    assert.equal(bidOnlyOpp.buyPrice, 500_100);
+    assert.equal(bidOnlyOpp.sellPrice, 900_000);
   });
 });

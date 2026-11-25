@@ -145,9 +145,13 @@ export const api = {
     filters: ArbitrageFilterState,
     page = 1,
     pageSize = 50,
+    signal?: AbortSignal,
   ): Promise<ArbitrageResponse> {
     const params = buildArbitrageQueryParams(filters, page, pageSize);
-    return requestJson<ArbitrageResponse>(`/api/arbitrage/opportunities?${params.toString()}`);
+    return requestJson<ArbitrageResponse>(
+      `/api/arbitrage/opportunities?${params.toString()}`,
+      signal ? { signal } : undefined,
+    );
   },
   getRecommendedTrades(opts?: {
     hubId?: HubId;

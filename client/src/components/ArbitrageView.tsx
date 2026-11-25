@@ -1,12 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertTriangle,
+  ArrowDownToLine,
   ArrowLeftRight,
   ArrowRight,
   ChevronLeft,
   ChevronRight,
   Globe,
+  type LucideIcon,
   Package,
+  Repeat,
   RotateCcw,
   Search,
   ShieldAlert,
@@ -24,6 +27,7 @@ import {
 import { getHubMeta, HUB_LIST } from '../lib/hubs.ts';
 import type {
   ArbitrageFilterState,
+  ArbitrageMode,
   ArbitrageOpportunity,
   ArbitrageResponse,
   HubId,
@@ -74,6 +78,72 @@ const CARGO_PRESETS: Array<{ label: string; value: number | null }> = [
 ];
 
 const QUICK_EXCLUDES = ['Ship SKINs', 'Apparel', 'Blueprints & Reactions'];
+
+const PAIRING_MODES: Array<{
+  mode: ArbitrageMode;
+  label: string;
+  title: string;
+  buyColHeader: string;
+  sellColHeader: string;
+  activeClass: string;
+  Icon: LucideIcon;
+}> = [
+  {
+    mode: 'instant',
+    label: 'Instant (Sell → Buy)',
+    title:
+      'Buy from Source Sell orders and dump immediately into Destination Buy orders (sales tax only)',
+    buyColHeader: 'Buy (Source Ask)',
+    sellColHeader: 'Sell (Dest Bid)',
+    activeClass: 'bg-[#46E595]/20 text-[#46E595] border-[#46E595]/45',
+    Icon: Zap,
+  },
+  {
+    mode: 'relist',
+    label: 'Relist (Sell → Sell)',
+    title:
+      'Buy from Source Sell orders and list Sell order at Destination Best Ask -1 Tick (pays Dest broker + sales tax)',
+    buyColHeader: 'Buy (Source Ask)',
+    sellColHeader: 'List (Dest -1T)',
+    activeClass: 'bg-[#9B7BFF]/20 text-[#B298FF] border-[#9B7BFF]/45',
+    Icon: Package,
+  },
+  {
+    mode: 'buy_to_buy',
+    label: 'Bid → Instant (Buy → Buy)',
+    title:
+      'Place Buy order at Source Best Bid +1 Tick and dump into Destination Buy orders (pays Source broker + sales tax)',
+    buyColHeader: 'Bid (Source +1T)',
+    sellColHeader: 'Sell (Dest Bid)',
+    activeClass: 'bg-[#F5B841]/18 text-[#F5B841] border-[#F5B841]/45',
+    Icon: ArrowDownToLine,
+  },
+  {
+    mode: 'buy_to_sell',
+    label: 'Bid → Relist (Buy → Sell)',
+    title:
+      'Place Buy order at Source Best Bid +1 Tick and list Sell order at Destination Best Ask -1 Tick (pays both Source & Dest broker fees + sales tax)',
+    buyColHeader: 'Bid (Source +1T)',
+    sellColHeader: 'List (Dest -1T)',
+    activeClass: 'bg-[#38BDF8]/18 text-[#38BDF8] border-[#38BDF8]/45',
+    Icon: Repeat,
+  },
+];
+
+function getSummaryFeeLabel(mode: ArbitrageMode, fees?: ArbitrageResponse['fees']): string {
+  const bkr = (fees?.brokerFeePct ?? 3.0).toFixed(2);
+  const tax = (fees?.salesTaxPct ?? 7.5).toFixed(2);
+  switch (mode) {
+    case 'instant':
+      return `Instant Fees (Tax ${tax}%)`;
+    case 'relist':
+      return `Relist Fees (Dest Bkr ${bkr}% + Tax ${tax}%)`;
+    case 'buy_to_buy':
+      return `Bid → Instant Fees (Src Bkr ${bkr}% + Tax ${tax}%)`;
+    case 'buy_to_sell':
+      return `Bid → Relist Fees (2× Bkr ${bkr}% + Tax ${tax}%)`;
+  }
+}
 
 function ShorthandInput({
   label,
@@ -133,16 +203,30 @@ export function ArbitrageView({
   const [data, setData] = useState<ArbitrageResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const wasRunningRef = useRef(false);
+  const requestIdRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   const load = useCallback(async () => {
+    abortControllerRef.current?.abort();
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    const requestId = ++requestIdRef.current;
+
     setLoading(true);
     try {
-      const res = await api.getArbitrageOpportunities(filters, page, 50);
-      setData(res);
+      const res = await api.getArbitrageOpportunities(filters, page, 50, controller.signal);
+      if (requestId === requestIdRef.current) {
+        setData(res);
+      }
     } catch (err) {
-      onNotify(err instanceof Error ? err.message : 'Failed to load arbitrage opportunities');
+      if (err instanceof DOMException && err.name === 'AbortError') return;
+      if (requestId === requestIdRef.current) {
+        onNotify(err instanceof Error ? err.message : 'Failed to load arbitrage opportunities');
+      }
     } finally {
-      setLoading(false);
+      if (requestId === requestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [filters, page, onNotify]);
 
@@ -152,6 +236,12 @@ export function ArbitrageView({
     }, 120);
     return () => window.clearTimeout(id);
   }, [load]);
+
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
 
   useEffect(() => {
     const running = Boolean(syncStatus?.orderSync.running);
@@ -205,6 +295,9 @@ export function ArbitrageView({
   const hubs = data?.hubs ?? syncStatus?.hubs ?? [];
   const syncedHubsCount = hubs.filter((h) => h.twoSidedItems > 0 || h.totalOrders > 0).length;
   const orderRunning = Boolean(syncStatus?.orderSync.running || syncStatus?.sdeSync.running);
+  const displayMode = data?.mode ?? filters.mode;
+  const activePairing =
+    PAIRING_MODES.find((p) => p.mode === displayMode) ?? PAIRING_MODES[0];
 
   return (
     <div className="space-y-4">
@@ -271,34 +364,32 @@ export function ArbitrageView({
       <section className="bg-[#0F1118] border border-[#262938] rounded-md p-4 space-y-3.5">
         {/* Top Row: Execution Mode + Source/Dest + Search */}
         <div className="flex flex-wrap items-center gap-3">
-          {/* Instant vs Relist Mode */}
-          <div className="flex items-center bg-[#08090D] p-1 rounded-md border border-[#262938]">
-            <button
-              type="button"
-              onClick={() => updateFilters({ ...filters, mode: 'instant' })}
-              title="Buy from Source Sell orders and dump immediately into Destination Buy orders (sales tax only)"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors ${
-                filters.mode === 'instant'
-                  ? 'bg-[#46E595]/20 text-[#46E595] border border-[#46E595]/45'
-                  : 'text-[#9CA0B0] hover:text-[#EFEAE0] border border-transparent'
-              }`}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              <span>Instant (Sell → Buy)</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => updateFilters({ ...filters, mode: 'relist' })}
-              title="Buy from Source Sell orders and list Sell order at Destination Best Ask -1 Tick (pays Dest broker + sales tax)"
-              className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium cursor-pointer transition-colors ${
-                filters.mode === 'relist'
-                  ? 'bg-[#9B7BFF]/20 text-[#B298FF] border border-[#9B7BFF]/45'
-                  : 'text-[#9CA0B0] hover:text-[#EFEAE0] border border-transparent'
-              }`}
-            >
-              <Package className="w-3.5 h-3.5" />
-              <span>Relist (Sell → Sell)</span>
-            </button>
+          {/* Sell/Buy Execution Pairings */}
+          <div
+            role="group"
+            aria-label="Arbitrage pairing mode"
+            className="flex flex-wrap items-center bg-[#08090D] p-1 rounded-md border border-[#262938] gap-0.5"
+          >
+            {PAIRING_MODES.map(({ mode, label, title, activeClass, Icon }) => {
+              const active = filters.mode === mode;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={active}
+                  onClick={() => updateFilters({ ...filters, mode })}
+                  title={title}
+                  className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded text-xs font-medium border cursor-pointer transition-colors whitespace-nowrap ${
+                    active
+                      ? activeClass
+                      : 'text-[#9CA0B0] hover:text-[#EFEAE0] border-transparent'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" />
+                  <span>{label}</span>
+                </button>
+              );
+            })}
           </div>
 
           {/* Route Hub Selectors */}
@@ -528,9 +619,7 @@ export function ArbitrageView({
         </div>
         <div className="bg-[#0F1118] border border-[#262938] rounded-md px-4 py-2.5 flex items-center justify-between">
           <span className="text-[10px] font-mono-num uppercase tracking-wider text-[#656A7C]">
-            {filters.mode === 'instant'
-              ? `Instant Fee (Tax ${data?.fees.salesTaxPct.toFixed(2) ?? '7.50'}%)`
-              : `Relist Fees (${data ? (data.fees.brokerFeePct + data.fees.salesTaxPct).toFixed(2) : '10.50'}%)`}
+            {getSummaryFeeLabel(displayMode, data?.fees)}
           </span>
           <span className="font-mono-num text-sm font-semibold text-[#B298FF]">
             Avg ROI {data ? formatPct(data.summaryStats.avgRoiPct) : '—'}
@@ -553,12 +642,14 @@ export function ArbitrageView({
             <p className="text-xs text-[#9CA0B0] max-w-md mx-auto">
               {syncedHubsCount < 2
                 ? 'Sync at least two hubs first to discover inter-hub price spreads.'
-                : 'Try lowering Min Haul Profit / Min ROI %, clearing Max Cargo m³, or switching between Instant and Relist mode.'}
+                : 'Try lowering Min Haul Profit / Min ROI %, clearing Max Cargo m³, or switching between Sell/Buy pairing modes.'}
             </p>
           </div>
         ) : (
           <>
-            <div className="overflow-x-auto">
+            <div
+              className={`overflow-x-auto ${loading && data ? 'opacity-70 transition-opacity' : ''}`}
+            >
               <table className="w-full border-collapse text-left">
                 <thead className="bg-[#161923] border-b border-[#262938] text-[10px] font-mono-num uppercase tracking-wider text-[#9CA0B0]">
                   <tr>
@@ -574,10 +665,8 @@ export function ArbitrageView({
                     >
                       Route {renderSortArrow('jumps')}
                     </th>
-                    <th className="px-3 py-2.5 text-right">Buy (Source Ask)</th>
-                    <th className="px-3 py-2.5 text-right">
-                      {filters.mode === 'instant' ? 'Sell (Dest Bid)' : 'List (Dest -1T)'}
-                    </th>
+                    <th className="px-3 py-2.5 text-right">{activePairing.buyColHeader}</th>
+                    <th className="px-3 py-2.5 text-right">{activePairing.sellColHeader}</th>
                     <th
                       className="px-3 py-2.5 text-right cursor-pointer hover:text-[#EFEAE0]"
                       onClick={() => handleSort('unitNetProfit')}
@@ -628,7 +717,7 @@ export function ArbitrageView({
                     const dstMeta = getHubMeta(opp.destHubId);
                     return (
                       <tr
-                        key={`${opp.typeId}-${opp.sourceHubId}-${opp.destHubId}`}
+                        key={`${opp.mode}-${opp.typeId}-${opp.sourceHubId}-${opp.destHubId}`}
                         onClick={() => onSelectItem(opp.typeId, opp.destHubId)}
                         className="hover:bg-[#161923]/80 cursor-pointer transition-colors"
                       >
