@@ -20,19 +20,38 @@ export function isSourceBuyOrderMode(mode: ArbitrageMode): boolean {
   return mode === 'buy_to_buy' || mode === 'buy_to_sell';
 }
 
+export function getEffectiveBidVolume(
+  row: Pick<ArbitrageHubRow, 'bid_volume' | 'top_bid_volume'>,
+): number {
+  return row.top_bid_volume !== undefined && row.top_bid_volume > 0
+    ? row.top_bid_volume
+    : row.bid_volume;
+}
+
+export function getEffectiveAskVolume(
+  row: Pick<ArbitrageHubRow, 'ask_volume' | 'top_ask_volume'>,
+): number {
+  return row.top_ask_volume !== undefined && row.top_ask_volume > 0
+    ? row.top_ask_volume
+    : row.ask_volume;
+}
+
 export function hasEligibleArbitrageSource(
-  row: Pick<ArbitrageHubRow, 'best_bid' | 'best_ask' | 'bid_volume' | 'ask_volume' | 'buy_order_count'>,
+  row: Pick<
+    ArbitrageHubRow,
+    'best_bid' | 'best_ask' | 'bid_volume' | 'ask_volume' | 'top_bid_volume' | 'top_ask_volume' | 'buy_order_count'
+  >,
   mode: ArbitrageMode,
 ): boolean {
   if (isSourceBuyOrderMode(mode)) {
     return (
       row.best_bid !== null &&
       row.best_bid > 0 &&
-      row.bid_volume > 0 &&
+      getEffectiveBidVolume(row) > 0 &&
       row.buy_order_count > 0
     );
   }
-  return row.best_ask !== null && row.best_ask > 0 && row.ask_volume > 0;
+  return row.best_ask !== null && row.best_ask > 0 && getEffectiveAskVolume(row) > 0;
 }
 
 export interface ArbitrageHubRow {
@@ -48,6 +67,8 @@ export interface ArbitrageHubRow {
   bid_min_volume: number;
   bid_volume: number;
   ask_volume: number;
+  top_bid_volume?: number;
+  top_ask_volume?: number;
   buy_order_count: number;
   sell_order_count: number;
   // Hub-level regional history metrics (named dest_* for backwards compatibility; populated for both source and dest rows)
@@ -149,11 +170,15 @@ export function computeArbitrageOpportunity(params: {
     unitBuyCost = buyPrice * (1 + brokerRate); // Placing source buy order incurs source broker fee
   }
 
+  const sourceAskVolume = getEffectiveAskVolume(source);
+  const sourceBidVolume = getEffectiveBidVolume(source);
+  const destBidVolume = getEffectiveBidVolume(dest);
+
   let sellPrice: number;
   let unitSellProceeds: number;
   let destTickMatched = false;
   if (!usesDestSellOrder) {
-    if (dest.best_bid === null || dest.best_bid <= 0 || dest.bid_volume <= 0) return null;
+    if (dest.best_bid === null || dest.best_bid <= 0 || destBidVolume <= 0) return null;
     sellPrice = dest.best_bid;
     unitSellProceeds = sellPrice * (1 - salesTaxRate); // Dumping into existing buy order pays sales tax only
   } else {
@@ -167,13 +192,13 @@ export function computeArbitrageOpportunity(params: {
 
   let availableUnits: number;
   if (mode === 'instant') {
-    availableUnits = Math.min(source.ask_volume, dest.bid_volume);
+    availableUnits = Math.min(sourceAskVolume, destBidVolume);
   } else if (mode === 'relist') {
-    availableUnits = source.ask_volume;
+    availableUnits = sourceAskVolume;
   } else if (mode === 'buy_to_buy') {
-    availableUnits = dest.bid_volume;
+    availableUnits = destBidVolume;
   } else {
-    availableUnits = source.bid_volume;
+    availableUnits = sourceBidVolume;
   }
 
   const unitNetProfit = unitSellProceeds - unitBuyCost;

@@ -127,7 +127,7 @@ export function getHubSyncFreshness(): HubSyncFreshness[] {
   }));
 }
 
-interface SummaryRow {
+export interface SummaryRow {
   type_id: number;
   best_bid: number | null;
   best_ask: number | null;
@@ -135,6 +135,8 @@ interface SummaryRow {
   bid_min_volume: number;
   bid_volume: number;
   ask_volume: number;
+  top_bid_volume: number;
+  top_ask_volume: number;
   buy_order_count: number;
   sell_order_count: number;
   top_buy_competition: number;
@@ -143,7 +145,7 @@ interface SummaryRow {
   recent_updates_24h: number;
 }
 
-function aggregateHubSummaries(orders: EsiMarketOrder[], nowMs: number): SummaryRow[] {
+export function aggregateHubSummaries(orders: EsiMarketOrder[], nowMs: number): SummaryRow[] {
   const oneHourAgo = nowMs - 3600_000;
   const twentyFourHoursAgo = nowMs - 24 * 3600_000;
 
@@ -200,18 +202,28 @@ function aggregateHubSummaries(orders: EsiMarketOrder[], nowMs: number): Summary
 
     const bestBid = singleUnitBestBid ?? rawBestBid;
     let topBuyComp = 0;
+    let topBidVolume = 0;
     if (bestBid !== null) {
       const threshold = bestBid * 0.98;
       for (const b of buys) {
-        if (b.price >= threshold) topBuyComp++;
+        if (b.price >= threshold) {
+          topBuyComp++;
+          if (singleUnitBestBid === null || b.min_volume <= 1) {
+            topBidVolume += b.volume_remain;
+          }
+        }
       }
     }
 
     let topSellComp = 0;
+    let topAskVolume = 0;
     if (bestAsk !== null) {
       const threshold = bestAsk * 1.02;
       for (const s of sells) {
-        if (s.price <= threshold) topSellComp++;
+        if (s.price <= threshold) {
+          topSellComp++;
+          topAskVolume += s.volume_remain;
+        }
       }
     }
 
@@ -223,6 +235,8 @@ function aggregateHubSummaries(orders: EsiMarketOrder[], nowMs: number): Summary
       bid_min_volume: rawBestBidMinVol,
       bid_volume: bidVolume,
       ask_volume: askVolume,
+      top_bid_volume: topBidVolume,
+      top_ask_volume: topAskVolume,
       buy_order_count: buys.length,
       sell_order_count: sells.length,
       top_buy_competition: topBuyComp,
@@ -359,9 +373,9 @@ async function syncRegionForHubs(
       const insertSummary = db.prepare(`
         INSERT INTO market_summary (
           hub_id, type_id, best_bid, best_ask, raw_best_bid, bid_min_volume,
-          bid_volume, ask_volume, buy_order_count, sell_order_count,
+          bid_volume, ask_volume, top_bid_volume, top_ask_volume, buy_order_count, sell_order_count,
           top_buy_competition, top_sell_competition, recent_updates_1h, recent_updates_24h, updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `);
       const insertSnapshot = db.prepare(`
         INSERT INTO market_snapshots (
@@ -401,6 +415,8 @@ async function syncRegionForHubs(
             s.bid_min_volume,
             s.bid_volume,
             s.ask_volume,
+            s.top_bid_volume,
+            s.top_ask_volume,
             s.buy_order_count,
             s.sell_order_count,
             s.top_buy_competition,
