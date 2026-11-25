@@ -187,6 +187,7 @@ export function initDatabase(customPath?: string): DatabaseSync {
 
   createSchema(db);
   migrateSchemaToMultiHub(db);
+  migrateTopOfBookVolumeColumns(db);
   seedDefaults(db);
 
   if (!customPath) {
@@ -280,6 +281,8 @@ function createSchema(db: DatabaseSync): void {
       bid_min_volume INTEGER DEFAULT 1,
       bid_volume INTEGER DEFAULT 0,
       ask_volume INTEGER DEFAULT 0,
+      top_bid_volume INTEGER DEFAULT 0,
+      top_ask_volume INTEGER DEFAULT 0,
       buy_order_count INTEGER DEFAULT 0,
       sell_order_count INTEGER DEFAULT 0,
       top_buy_competition INTEGER DEFAULT 0,
@@ -608,6 +611,66 @@ function migrateSchemaToMultiHub(db: DatabaseSync): void {
     if (!getTableColumns(db, 'sync_runs').has('hub_id')) {
       db.exec("ALTER TABLE sync_runs ADD COLUMN hub_id TEXT DEFAULT 'jita';");
     }
+  });
+}
+
+function migrateTopOfBookVolumeColumns(db: DatabaseSync): void {
+  withTransaction(db, () => {
+    const cols = getTableColumns(db, 'market_summary');
+    let added = false;
+    if (!cols.has('top_bid_volume')) {
+      db.exec('ALTER TABLE market_summary ADD COLUMN top_bid_volume INTEGER NOT NULL DEFAULT 0;');
+      added = true;
+    }
+    if (!cols.has('top_ask_volume')) {
+      db.exec('ALTER TABLE market_summary ADD COLUMN top_ask_volume INTEGER NOT NULL DEFAULT 0;');
+      added = true;
+    }
+    if (!added) return;
+
+    db.exec(`
+      UPDATE market_summary
+      SET
+        top_bid_volume = CASE
+          WHEN best_bid IS NOT NULL AND best_bid > 0 THEN COALESCE((
+            SELECT SUM(ho.volume_remain)
+            FROM hub_orders ho
+            WHERE ho.hub_id = market_summary.hub_id
+              AND ho.type_id = market_summary.type_id
+              AND ho.is_buy_order = 1
+              AND ho.min_volume <= ho.volume_remain
+              AND ho.price >= market_summary.best_bid * 0.98
+              AND (
+                ho.min_volume <= 1
+                OR NOT EXISTS (
+                  SELECT 1 FROM hub_orders h1
+                  WHERE h1.hub_id = market_summary.hub_id
+                    AND h1.type_id = market_summary.type_id
+                    AND h1.is_buy_order = 1
+                    AND h1.min_volume <= 1
+                    AND h1.min_volume <= h1.volume_remain
+                )
+              )
+          ), 0)
+          ELSE 0
+        END,
+        top_ask_volume = CASE
+          WHEN best_ask IS NOT NULL AND best_ask > 0 THEN COALESCE((
+            SELECT SUM(ho.volume_remain)
+            FROM hub_orders ho
+            WHERE ho.hub_id = market_summary.hub_id
+              AND ho.type_id = market_summary.type_id
+              AND ho.is_buy_order = 0
+              AND ho.price <= market_summary.best_ask * 1.02
+          ), 0)
+          ELSE 0
+        END
+      WHERE EXISTS (
+        SELECT 1 FROM hub_orders ho
+        WHERE ho.hub_id = market_summary.hub_id
+          AND ho.type_id = market_summary.type_id
+      );
+    `);
   });
 }
 

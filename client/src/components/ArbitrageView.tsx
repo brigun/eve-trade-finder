@@ -681,6 +681,7 @@ export function ArbitrageView({
                     </th>
                     <th
                       className="px-3 py-2.5 text-right cursor-pointer hover:text-[#EFEAE0]"
+                      title="Capped by near-top-of-book depth (±2% of best price) and Max Cargo m³"
                       onClick={() => handleSort('haulUnits')}
                     >
                       Haul Qty {renderSortArrow('haulUnits')}
@@ -787,7 +788,10 @@ export function ArbitrageView({
                           {formatPct(opp.roiPct)}
                         </td>
 
-                        <td className="px-3 py-2.5 text-right font-mono-num text-[#EFEAE0]">
+                        <td
+                          title={`Available near-top depth: ${opp.availableUnits.toLocaleString()} units (within ±2% of best price)`}
+                          className="px-3 py-2.5 text-right font-mono-num text-[#EFEAE0]"
+                        >
                           <div>{opp.haulUnits.toLocaleString()}</div>
                           {opp.totalVolumeM3 !== null && (
                             <div className="text-[10px] text-[#656A7C]">
