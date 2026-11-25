@@ -59,6 +59,8 @@ export interface ArbitrageOpportunity {
   destAsk: number | null;
   buyPrice: number;
   sellPrice: number;
+  sourceTickMatched: boolean;
+  destTickMatched: boolean;
   unitBuyCost: number;
   unitSellProceeds: number;
   unitNetProfit: number;
