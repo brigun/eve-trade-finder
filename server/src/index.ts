@@ -6,6 +6,7 @@ import express, { type NextFunction, type Request, type Response } from 'express
 import { CLIENT_DIST_DIR, CLIENT_ORIGIN, PORT } from './config.js';
 import { initDatabase } from './db/database.js';
 import { advisorRouter } from './routes/advisor.js';
+import { appRouter } from './routes/app.js';
 import { arbitrageRouter } from './routes/arbitrage.js';
 import { authRouter } from './routes/auth.js';
 import { marketRouter } from './routes/market.js';
@@ -38,6 +39,7 @@ export function createApp() {
   app.use('/api/settings', settingsRouter);
   app.use('/api/auth', authRouter);
   app.use('/api/advisor', advisorRouter);
+  app.use('/api/app', appRouter);
 
   if (fs.existsSync(CLIENT_DIST_DIR)) {
     app.use(express.static(CLIENT_DIST_DIR));

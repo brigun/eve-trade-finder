@@ -1,5 +1,14 @@
 import { useEffect, useState } from 'react';
-import { Bot, Calculator, Database, RefreshCw, Save, ShieldCheck } from 'lucide-react';
+import {
+  Bot,
+  Calculator,
+  Database,
+  Download,
+  ExternalLink,
+  RefreshCw,
+  Save,
+  ShieldCheck,
+} from 'lucide-react';
 import { api } from '../lib/api.ts';
 import { formatRelativeTime } from '../lib/format.ts';
 import type {
@@ -7,10 +16,16 @@ import type {
   LlmModelOption,
   LlmThinkingLevel,
   SyncStatusResponse,
+  UpdateCheckResponse,
 } from '../types/api.ts';
 
 interface SettingsViewProps {
   syncStatus: SyncStatusResponse | null;
+  updateInfo: UpdateCheckResponse | null;
+  checkingUpdates: boolean;
+  skippedUpdateVersion: string | null;
+  onCheckForUpdates: () => void;
+  onClearSkippedUpdate: () => void;
   onSettingsUpdated: () => Promise<void>;
   onTriggerSde: () => void;
   onTriggerBackfill: () => void;
@@ -19,6 +34,11 @@ interface SettingsViewProps {
 
 export function SettingsView({
   syncStatus,
+  updateInfo,
+  checkingUpdates,
+  skippedUpdateVersion,
+  onCheckForUpdates,
+  onClearSkippedUpdate,
   onSettingsUpdated,
   onTriggerSde,
   onTriggerBackfill,
@@ -579,6 +599,105 @@ export function SettingsView({
             ))}
           </div>
         )}
+      </section>
+
+      {/* Application Updates & Version */}
+      <section className="corner-frame bg-[#0F1118] border border-[#262938] rounded-md p-5 space-y-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div className="flex items-center gap-2">
+            <Download className="w-4 h-4 text-[#46E595]" />
+            <h2 className="font-display text-sm font-semibold text-[#EFEAE0]">
+              Application Updates &amp; Version
+            </h2>
+          </div>
+          {(() => {
+            if (!updateInfo) {
+              return (
+                <span className="px-2 py-0.5 rounded font-mono-num text-[10px] bg-[#161923] text-[#9CA0B0] border border-[#262938]">
+                  NOT CHECKED
+                </span>
+              );
+            }
+            if (updateInfo.status === 'error') {
+              return (
+                <span className="px-2 py-0.5 rounded font-mono-num text-[10px] bg-[#FF4D6D]/15 text-[#FF4D6D] border border-[#FF4D6D]/40">
+                  CHECK FAILED
+                </span>
+              );
+            }
+            if (updateInfo.updateAvailable && updateInfo.latestVersion) {
+              return (
+                <span className="px-2 py-0.5 rounded font-mono-num text-[10px] bg-[#46E595]/15 text-[#46E595] border border-[#46E595]/35">
+                  UPDATE AVAILABLE (v{updateInfo.latestVersion})
+                </span>
+              );
+            }
+            return (
+              <span className="px-2 py-0.5 rounded font-mono-num text-[10px] bg-[#9B7BFF]/15 text-[#B298FF] border border-[#9B7BFF]/35">
+                UP TO DATE
+              </span>
+            );
+          })()}
+        </div>
+
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-1 text-xs text-[#9CA0B0]">
+            <div>
+              Installed Version:{' '}
+              <span className="font-mono-num text-[#EFEAE0]">
+                {updateInfo?.currentVersion ? `v${updateInfo.currentVersion}` : '—'}
+              </span>
+              {updateInfo?.checkedAt && (
+                <span className="text-[#656A7C] ml-2 font-mono-num text-[11px]">
+                  · Checked {formatRelativeTime(updateInfo.checkedAt)}
+                </span>
+              )}
+            </div>
+            {updateInfo?.status === 'error' && updateInfo.error && (
+              <p className="text-[11px] font-mono-num text-[#FF4D6D]">{updateInfo.error}</p>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            {updateInfo?.status === 'ok' &&
+              updateInfo.updateAvailable &&
+              updateInfo.latestVersion && (
+                <>
+                  <a
+                    href={updateInfo.releaseUrl}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#46E595] text-[#08090D] font-semibold text-xs hover:bg-[#5EF0A7] transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Download v{updateInfo.latestVersion}</span>
+                    <ExternalLink className="w-3 h-3 opacity-80" />
+                  </a>
+                  {skippedUpdateVersion === updateInfo.latestVersion && (
+                    <button
+                      type="button"
+                      onClick={onClearSkippedUpdate}
+                      className="px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#9B7BFF] text-xs text-[#9CA0B0] hover:text-[#EFEAE0] cursor-pointer"
+                    >
+                      Show Banner Again
+                    </button>
+                  )}
+                </>
+              )}
+
+            <button
+              type="button"
+              disabled={checkingUpdates}
+              onClick={onCheckForUpdates}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#161923] border border-[#262938] hover:border-[#9B7BFF] disabled:opacity-50 text-xs text-[#EFEAE0] cursor-pointer"
+            >
+              <RefreshCw
+                className={`w-3.5 h-3.5 text-[#9B7BFF] ${checkingUpdates ? 'animate-spin' : ''}`}
+              />
+              <span>{checkingUpdates ? 'Checking...' : 'Check for Updates'}</span>
+            </button>
+          </div>
+        </div>
       </section>
 
       {/* Persisted SQLite Sync Audit Log */}

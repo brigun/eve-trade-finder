@@ -10,6 +10,7 @@ import { MyOrdersView } from './components/MyOrdersView.tsx';
 import { RecommendedTradeCard } from './components/RecommendedTradeCard.tsx';
 import { SettingsView } from './components/SettingsView.tsx';
 import { TopBar, type AppTab } from './components/TopBar.tsx';
+import { UpdateBanner } from './components/UpdateBanner.tsx';
 import { WatchlistView } from './components/WatchlistView.tsx';
 import { api } from './lib/api.ts';
 import { getHubMeta, isValidHubId } from './lib/hubs.ts';
@@ -27,7 +28,12 @@ import type {
   RecommendedTradesResponse,
   SsoStatusResponse,
   SyncStatusResponse,
+  UpdateCheckResponse,
 } from './types/api.ts';
+
+const SKIPPED_UPDATE_STORAGE_KEY = 'jitaMonolith.skippedUpdateVersion';
+const STARTUP_UPDATE_DELAY_MS = 4_000;
+const UPDATE_RECHECK_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 const DEFAULT_FILTERS: FilterState = {
   q: '',
@@ -108,6 +114,16 @@ export default function App() {
   const [drawerHubId, setDrawerHubId] = useState<HubId | null>(null);
   const [askNeonOpen, setAskNeonOpen] = useState(false);
   const [dismissedError, setDismissedError] = useState<string | null>(null);
+  const [updateInfo, setUpdateInfo] = useState<UpdateCheckResponse | null>(null);
+  const [checkingUpdates, setCheckingUpdates] = useState(false);
+  const [dismissedUpdateVersion, setDismissedUpdateVersion] = useState<string | null>(null);
+  const [skippedUpdateVersion, setSkippedUpdateVersion] = useState<string | null>(() => {
+    try {
+      return window.localStorage.getItem(SKIPPED_UPDATE_STORAGE_KEY);
+    } catch {
+      return null;
+    }
+  });
   const [toast, setToast] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
   const wasRunningRef = useRef(false);
@@ -248,6 +264,70 @@ export default function App() {
     loadItems,
     loadRecommended,
   ]);
+
+  const runUpdateCheck = useCallback(
+    async (manual: boolean) => {
+      setCheckingUpdates(true);
+      try {
+        const res = await api.checkForUpdates(manual);
+        setUpdateInfo(res);
+        if (manual) {
+          if (res.status === 'error') {
+            notify(res.error ? `Update check failed: ${res.error}` : 'Update check failed');
+          } else if (res.updateAvailable && res.latestVersion) {
+            setDismissedUpdateVersion(null);
+            notify(`Update available: v${res.latestVersion}`);
+          } else {
+            notify(`You're up to date (v${res.currentVersion})`);
+          }
+        }
+      } catch (err) {
+        if (manual) {
+          notify(err instanceof Error ? err.message : 'Update check failed');
+        }
+      } finally {
+        setCheckingUpdates(false);
+      }
+    },
+    [notify],
+  );
+
+  useEffect(() => {
+    const startupTimer = window.setTimeout(() => {
+      void runUpdateCheck(false);
+    }, STARTUP_UPDATE_DELAY_MS);
+    const intervalId = window.setInterval(() => {
+      void runUpdateCheck(false);
+    }, UPDATE_RECHECK_INTERVAL_MS);
+
+    return () => {
+      window.clearTimeout(startupTimer);
+      window.clearInterval(intervalId);
+    };
+  }, [runUpdateCheck]);
+
+  const handleSkipUpdateVersion = useCallback(
+    (version: string) => {
+      try {
+        window.localStorage.setItem(SKIPPED_UPDATE_STORAGE_KEY, version);
+      } catch {
+        // ignore storage failure
+      }
+      setSkippedUpdateVersion(version);
+      notify(`Skipped update v${version} — you can still check in Settings`);
+    },
+    [notify],
+  );
+
+  const handleClearSkippedUpdate = useCallback(() => {
+    try {
+      window.localStorage.removeItem(SKIPPED_UPDATE_STORAGE_KEY);
+    } catch {
+      // ignore storage failure
+    }
+    setSkippedUpdateVersion(null);
+    setDismissedUpdateVersion(null);
+  }, []);
 
   const handleSyncOrders = async () => {
     try {
@@ -481,6 +561,18 @@ export default function App() {
       />
 
       <main className="flex-1 max-w-[1640px] w-full mx-auto px-4 sm:px-6 py-5 space-y-4">
+        {updateInfo?.status === 'ok' &&
+          updateInfo.updateAvailable &&
+          updateInfo.latestVersion &&
+          updateInfo.latestVersion !== skippedUpdateVersion &&
+          updateInfo.latestVersion !== dismissedUpdateVersion && (
+            <UpdateBanner
+              updateInfo={updateInfo}
+              onDismissSession={() => setDismissedUpdateVersion(updateInfo.latestVersion)}
+              onSkipVersion={handleSkipUpdateVersion}
+            />
+          )}
+
         {activeTab === 'scanner' && (
           <>
             {(() => {
@@ -624,6 +716,11 @@ export default function App() {
         {activeTab === 'settings' && (
           <SettingsView
             syncStatus={syncStatus}
+            updateInfo={updateInfo}
+            checkingUpdates={checkingUpdates}
+            skippedUpdateVersion={skippedUpdateVersion}
+            onCheckForUpdates={() => void runUpdateCheck(true)}
+            onClearSkippedUpdate={handleClearSkippedUpdate}
             onSettingsUpdated={async () => {
               await Promise.all([loadMeta(), loadItems(), loadRecommended()]);
             }}
@@ -647,6 +744,9 @@ export default function App() {
             endorsed by or affiliated with Fenris Creations.
           </p>
           <div className="flex flex-wrap items-center gap-3 font-mono-num text-[10px] shrink-0">
+            {updateInfo?.currentVersion && (
+              <span className="text-[#9CA0B0]">v{updateInfo.currentVersion}</span>
+            )}
             <span>Market data via EVE ESI &amp; Official SDE · Auth via EVE SSO</span>
             <a
               href="https://www.eveonline.com"

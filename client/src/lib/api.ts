@@ -22,6 +22,7 @@ import type {
   SsoStatusResponse,
   SyncStatusResponse,
   TradeHubFreshness,
+  UpdateCheckResponse,
   WatchlistItem,
 } from '../types/api.ts';
 
@@ -328,5 +329,8 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(payload),
     });
+  },
+  checkForUpdates(force = false): Promise<UpdateCheckResponse> {
+    return requestJson<UpdateCheckResponse>(`/api/app/update${force ? '?force=true' : ''}`);
   },
 };
