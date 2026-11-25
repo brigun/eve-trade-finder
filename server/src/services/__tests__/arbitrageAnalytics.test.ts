@@ -4,6 +4,7 @@ import { matchOrderToHubs } from '../../config/hubs.js';
 import { aggregateHubSummaries, type EsiMarketOrder } from '../orderSync.js';
 import {
   computeArbitrageOpportunity,
+  computeArbitrageRoiStats,
   filterAndSortArbitrage,
   hasEligibleArbitrageSource,
   parseArbitrageMode,
@@ -409,6 +410,30 @@ describe('Inter-hub arbitrage analytics', () => {
     assert.ok(codes.has('INFLATED_ASK'));
     assert.ok(codes.has('DEPRESSED_BID'));
     assert.ok(codes.has('LOW_HISTORY'));
+  });
+
+  it('computes robust medianRoiPct and non-anomalous avgRoiPct across outlier ROI routes', () => {
+    assert.deepEqual(computeArbitrageRoiStats([]), { medianRoiPct: 0, avgRoiPct: 0 });
+
+    const stats = computeArbitrageRoiStats([
+      { roiPct: 10, hasAnomaly: false },
+      { roiPct: 20, hasAnomaly: false },
+      { roiPct: 30, hasAnomaly: false },
+      { roiPct: 500_000_000, hasAnomaly: true }, // extreme 0.01 ISK anomaly outlier
+    ]);
+    // Sorted ROIs: [10, 20, 30, 500_000_000] -> even median = (20 + 30) / 2 = 25
+    assert.equal(stats.medianRoiPct, 25);
+    // Clean avg ignores anomalous outlier: (10 + 20 + 30) / 3 = 20
+    assert.equal(stats.avgRoiPct, 20);
+
+    // Odd count + all-anomalous fallback to medianRoiPct
+    const allAnomalous = computeArbitrageRoiStats([
+      { roiPct: 15, hasAnomaly: true },
+      { roiPct: 45, hasAnomaly: true },
+      { roiPct: 9_000_000, hasAnomaly: true },
+    ]);
+    assert.equal(allAnomalous.medianRoiPct, 45);
+    assert.equal(allAnomalous.avgRoiPct, 45);
   });
 
   it('matches best_bid / best_ask instead of crossing the spread on 1-tick tight spreads', () => {

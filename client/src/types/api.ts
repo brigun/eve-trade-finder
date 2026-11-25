@@ -91,6 +91,7 @@ export interface ArbitrageResponse {
   summaryStats: {
     totalMatched: number;
     bestHaulProfit: number;
+    medianRoiPct: number;
     avgRoiPct: number;
     syncedHubsCount: number;
   };
